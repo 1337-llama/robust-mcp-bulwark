@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft: §1–§4 and §7 drafted (✅); §5–§6 seed notes, revised in design 03; others seeded (🌱) or not yet written (📝) |
-| Version | 0.6 |
+| Version | 0.7 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -18,6 +18,7 @@
 | 0.4 | 2026-11-26 | (Superseded before merge) Evaluation-first draft with live-model benchmark |
 | 0.5 | 2026-11-26 | Gateway with deterministic attack suite (ADR-0002, amends ADR-0001). Drafted §1–§3; renumbered FR/NFR; stdio-only v0.1; $0 and no-manual-testing constraints; updated §10, §12, §14, §15 |
 | 0.6 | 2026-11-26 | Design 02: §4 architecture (v0.1 stdio, attack suite components, verify-before-call), §7 threat model (STRIDE, mitigations mapping, accepted risks); ADR-0003 Go, ADR-0004 OPA; MCP baseline 2026-07-28; FR-028…032, NFR-013…015; file-based sink |
+| 0.7 | 2026-11-26 | Review fixes B1/B2: protocol handling rewritten for 2026-07-28 (no `initialize`, per-request `_meta`, `server/discover`, MRTR, `subscriptions/listen`) with 2025-11-25 compatibility; model-visible channel inventory (§4.5); whole-object tool fingerprints; FR-033…036; T-16…T-18; AR-8, AR-9; scenarios L-07, L-08 |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -41,7 +42,7 @@ flowchart LR
     D["none (direct) · bulwark (warn) · bulwark (enforce)"]
   end
   subgraph Lab["lab/ (LAB ONLY)"]
-    L["Malicious-but-harmless<br/>MCP servers L-01…L-06"]
+    L["Malicious-but-harmless<br/>MCP servers L-01…L-08"]
   end
   RC <-->|"MCP over stdio"| D <-->|"MCP over stdio"| L
   L -. "exfiltration attempts" .-> K
@@ -49,7 +50,7 @@ flowchart LR
   RC --> AS
 ```
 
-**Why no AI model is needed:** Bulwark never relies on the model behaving well. It controls what reaches the model (tool definitions, results) and which calls get through. A scripted client that sends exactly what a hijacked agent would send tests those controls deterministically. How often real models get hijacked is covered by published research (for example MCPTox), which the docs cite.
+**Why no AI model is needed:** Bulwark never relies on the model behaving well. It inspects the server-supplied content that reaches the model, to the extent listed per channel in §4.5 (some channels are only analyzed and audited in v0.1), and it controls which calls get through. A scripted client that sends exactly what a hijacked agent would send tests those controls deterministically. How often real models get hijacked is covered by published research (for example MCPTox), which the docs cite.
 
 ### 1.2 Scope
 
@@ -57,19 +58,36 @@ flowchart LR
 |---|---|---|
 | Transport | stdio | Streamable HTTP (v0.2) |
 | Servers per gateway | One upstream server per gateway process | Multi-server aggregation with namespacing (v0.2) |
-| MCP features enforced | `tools/list`, `tools/call`, `notifications/tools/list_changed` | Resources and prompts: pinning and audit only (v0.2) |
-| Server-initiated requests (sampling, elicitation, roots) | **Passed through and audited, not enforced** | Policy enforcement (v0.2+) |
+| Protocol revisions | **2026-07-28** (primary) and **2025-11-25** (compatibility); others rejected in `enforce` (FR-036) | Newer revisions as they ship |
+| MCP features enforced | `tools/list`, `tools/call` (including MRTR retries), server metadata from `server/discover` or `initialize` (FR-033), tool-change notifications | Pinning and blocking for prompts and resources (v0.2) |
+| MCP features analyzed and audited, not blocked | Prompts and resources (list metadata and contents), MRTR input requests (FR-034) | Policy enforcement (v0.2) |
+| Server-initiated requests (2025-11-25 only: sampling, elicitation, roots) | **Passed through and audited, not enforced** | Policy enforcement (v0.2+); deprecated or replaced by MRTR in 2026-07-28 |
 | Testing | Deterministic replay scenarios + detection corpora, all in CI | Optional "bring your own model" live mode (later) |
 | Session-level defenses | Per-call policy only | Taint tracking (v0.2) |
 
 ### 1.3 Target protocol revision
-v0.1 targets MCP specification revision **2026-07-28**, the latest at the time of drafting, supported by the official Go SDK v1.7.0 (ADR-0003). If client and server negotiate a different `protocolVersion`, the gateway forwards the negotiation unchanged and records the version in the audit log. Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines. `VERIFY:` 2026-07-28 changes that affect stdio (version-selection request, logging deprecation) when writing spec 003.
+v0.1 targets MCP specification revision **2026-07-28**, the latest at the time of drafting, supported by the official Go SDK v1.7.0 (ADR-0003). It also supports **2025-11-25** for compatibility, because clients and servers in the field will speak it for some time. Bulwark is **revision-aware but not a translator**: it forwards each message in the revision the sender used and applies the same controls in both.
+
+What changed in 2026-07-28 that matters to Bulwark (source: the official release post, blog.modelcontextprotocol.io/posts/2026-07-28; the draft `server/discover` spec page):
+
+| Area | 2025-11-25 | 2026-07-28 | Bulwark impact |
+|---|---|---|---|
+| Handshake | `initialize` / `initialized`; version negotiated once | Handshake **removed** (SEP-2575, SEP-2567). Each request carries its protocol version, client identity, and client capabilities in `_meta` (keys under `io.modelcontextprotocol/`) | The revision is determined **per message**, not per connection (FR-036) |
+| Server metadata | `InitializeResult`: `serverInfo`, `capabilities`, `instructions` | `server/discover` result: `supportedVersions`, `capabilities`, `instructions`, cache hints; server name and version in `_meta['io.modelcontextprotocol/serverInfo']`. Servers must implement it; clients may skip it | Server metadata is pinned and analyzed from either source (FR-033) |
+| Server-to-client requests | `sampling/createMessage`, `elicitation/create`, `roots/list` | Replaced by **Multi Round-Trip Requests (MRTR)**: the server returns `resultType: "input_required"` with the requests it needs answered, and the client retries the original call with `inputResponses`. Roots, Sampling, and Logging deprecated (SEP-2577), still working for at least 12 months | MRTR input requests are analyzed and audited; the retry is a new `tools/call` through the full pipeline (FR-034, FR-035) |
+| Change notifications | `notifications/tools/list_changed` | Delivered on a client-opened `subscriptions/listen` stream, opted into per notification type | Both forms invalidate Bulwark's cached tool view (§4.4) |
+| List caching | — | List results carry `ttlMs` and `cacheScope` | Recorded; used by the pin re-check schedule (design 03) |
+
+Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines (2025-11-25). `VERIFY:` before spec 003, against the official 2026-07-28 changelog and schema (not reachable from the drafting environment): (a) stdio framing is unchanged; (b) the exact `_meta` key that carries the protocol version on stdio (the release post shows an HTTP header plus `_meta` client info); (c) the `server/discover` result fields above match the final revision, not only the draft page; (d) the notification method names delivered on `subscriptions/listen`; (e) how an MRTR retry is correlated with the original call; (f) whether Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
 
 ### 1.4 Glossary
 | Term | Definition |
 |---|---|
-| Tool definition | The `name`, `title`, `description`, `inputSchema`, `outputSchema`, and `annotations` of a tool, as returned by `tools/list` |
-| Fingerprint | SHA-256 over the canonicalized (RFC 8785 JCS) tool definition |
+| Tool definition | The **entire tool object** as returned by `tools/list` (for example `name`, `title`, `description`, `inputSchema`, `outputSchema`, `annotations`, `icons`, `_meta`, and any field a later revision adds) |
+| Server metadata | `instructions`, server info (name, title, version, and other descriptive fields), and capabilities, from `server/discover` (2026-07-28) or `initialize` (2025-11-25) |
+| Fingerprint | SHA-256 over the canonicalized (RFC 8785 JCS) tool definition or server metadata. Every field counts unless named in an explicit, audited exclude list (empty by default), so unknown fields cannot slip past pinning |
+| Model-visible channel | Any server-supplied content that can reach the model or the user, such as tool definitions, server instructions, prompts, resources, results, and MRTR input requests (§4.5) |
+| MRTR | Multi Round-Trip Requests (2026-07-28): a server answers a call with `resultType: "input_required"`, and the client retries the call with `inputResponses` |
 | Pinning | Recording an approved fingerprint and alerting on or blocking any difference |
 | Rug pull | A tool definition that changes after approval |
 | Tool poisoning | Instructions aimed at the model hidden in tool metadata |
@@ -93,9 +111,9 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 **Attack suite and evaluation**
 | ID | Requirement | Priority | Source |
 |---|---|---|---|
-| FR-001 | The suite shall provide scenarios L-01…L-06 (§10.3) as stdio MCP servers in `lab/`. Each has a manifest declaring ID, technique, OWASP/ATLAS mapping, replay script, and expected observables per condition. | MVP | G5 |
+| FR-001 | The suite shall provide scenarios L-01…L-08 (§10.3) as stdio MCP servers in `lab/`. Each has a manifest declaring ID, technique, OWASP/ATLAS mapping, replay script, and expected observables per condition. | MVP | G5 |
 | FR-002 | Lab servers shall use canary secrets only, record "exfiltration" only to the local observation log, and make no network connections at all. | MVP | G5 |
-| FR-003 | The replay client shall execute a scenario's replay script (`initialize`, `tools/list`, `tools/call` with given arguments, waits for notifications) and record every message sent and received. | MVP | G5 |
+| FR-003 | The replay client shall execute a scenario's replay script under a given protocol revision and record every message sent and received. Steps: for 2026-07-28, optional `server/discover`, then per-request `_meta`, `tools/list`, `tools/call` with given arguments, MRTR retries with scripted `inputResponses`, and waits on `subscriptions/listen`; for 2025-11-25, `initialize`/`initialized` first and `notifications/tools/list_changed` for waits. | MVP | G5 |
 | FR-004 | For each scenario, the suite shall assert the expected observables under each condition. At minimum, the attack must **succeed under `none`**, proving the scenario is real, and be **blocked or detected under `bulwark-enforce`**. | MVP | G5 |
 | FR-005 | CI shall run the suite on every PR and publish a results table (scenario × condition) in the job summary. A failing assertion fails the build. | MVP | G5 |
 | FR-006 | An analyzer corpus test shall report detection rate on poisoned tool definitions (MCPTox subset, if its license permits; `VERIFY:` license and format) and false-positive rate on benign tool definitions from real open-source MCP servers. | MVP | G2, G5 |
@@ -106,17 +124,21 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | ID | Requirement | Priority | Source |
 |---|---|---|---|
 | FR-020 | Gateway shall wrap one upstream stdio server command and proxy all MCP messages between client and server transparently when no policy applies. | MVP | G1 |
-| FR-021 | Gateway shall fingerprint every tool definition and compare it to the pin store. New or changed tools are handled by mode: `learn` (pin automatically), `warn` (forward and alert), `enforce` (hide the tool from the client until approved). | MVP | G2 |
+| FR-021 | Gateway shall fingerprint every tool definition (the whole tool object, minus an explicit exclude list that is empty by default and recorded in the pin store) and compare it to the pin store. New or changed tools are handled by mode: `learn` (pin automatically), `warn` (forward and alert), `enforce` (hide the tool from the client until approved). | MVP | G2 |
 | FR-022 | Gateway shall run static analyzers on tool definitions and record findings with severities. At minimum: hidden Unicode, model-directed instructions, cross-tool references, and side-channel schema parameters. In `enforce` mode, tools with high-severity findings are hidden until approved. | MVP | G2 |
 | FR-023 | Gateway shall evaluate a policy for every `tools/call` and enforce `allow` or `deny`. `ask` is resolved by an interactive terminal prompt when one is available; otherwise it is treated as `deny`. | MVP | G3 |
 | FR-024 | Policies shall be able to constrain arguments: path prefixes, URL/domain allowlists, and regex patterns. | MVP | G3 |
-| FR-025 | Gateway shall detect secrets in tool arguments and results (pattern and entropy based) and redact them according to configuration. | MVP | G3 |
+| FR-025 | Gateway shall detect secrets (pattern and entropy based) in tool arguments, MRTR `inputResponses`, and results (`content`, `structuredContent`, upstream error messages, and resource contents), and redact them according to configuration. | MVP | G3 |
 | FR-026 | Gateway shall write an audit record for every decision, chained with SHA-256 hashes so that any modification or deletion is detectable. | MVP | G4 |
 | FR-027 | The CLI shall support: `wrap`, `tools list/diff/approve/reject`, `policy test`, and `audit verify/tail`. | MVP | G1–G4 |
 | FR-028 | Gateway shall parse every message strictly: reject duplicate object keys, invalid UTF-8, and messages over the size or depth limits. It shall forward the **re-serialized form it inspected**, never the original bytes. | MVP | G2 (T-01) |
 | FR-029 | Every CLI output that includes untrusted text (tool definitions, diffs, prompts, audit fields) shall neutralize control characters, ANSI escapes, and bidi controls. | MVP | G2 (T-11) |
 | FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's current definition matches its approved pin, re-fetching `tools/list` itself when the last check is older than `pin_recheck_interval` (default: every call). | MVP | G2 (T-06, rug pull) |
-| FR-031 | Gateway shall track request IDs per direction, use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
+| FR-031 | Gateway shall track outstanding request IDs (client-to-server always; server-to-client too under 2025-11-25), use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
+| FR-033 | Gateway shall fingerprint, pin, and analyze **server metadata** (`instructions`, server info, capabilities) from `server/discover` (2026-07-28) or `initialize` (2025-11-25). In `enforce` mode, unapproved or changed metadata, or metadata with high-severity findings, has `instructions` and other free-text descriptive fields removed before forwarding until approved (name and version are kept). | MVP | G2 (M-8, B2) |
+| FR-034 | Gateway shall run the FR-022 analyzers on prompts (`prompts/list` metadata and `prompts/get` messages), resources (`resources/list` and template metadata), and MRTR input requests, and audit the findings. v0.1 does not block or pin these (AR-8). | MVP | G2 (M-8, M-9) |
+| FR-035 | Gateway shall treat an MRTR retry (a `tools/call` carrying `inputResponses`) as a new `tools/call`: pin check, secret scan of `inputResponses`, and policy evaluation with the input responses in the decision input. | MVP | G3 (M-9, T-16) |
+| FR-036 | Gateway shall determine each message's protocol revision (per request under 2026-07-28; from the negotiated version under 2025-11-25), apply the same controls under both supported revisions, and record the revision in the audit log. Messages in an unsupported or unrecognizable revision are rejected in `enforce` mode and forwarded with an audit record in `learn` and `warn` modes. | MVP | G2 (T-17) |
 
 **Later (v0.2+)**
 | ID | Requirement | Priority |
@@ -156,7 +178,7 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | C-3 | Constraint | No manual testing or local model runs (NFR-002). |
 | C-4 | Constraint | The repo is private until the v0.1 launch. GitHub Actions minutes for private repos on the Free plan are limited (`VERIFY:` current allowance; 2,000 minutes/month at time of drafting). At ≤ 10 minutes per run (NFR-009) this allows about 200 runs per month. |
 | A-1 | Assumption | Protocol-level replay is a faithful test of Bulwark's controls, because Bulwark acts only on protocol messages. It does **not** show how often a model would follow the malicious instructions. The docs cite published research for that (R3 in IDEA.md). |
-| A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the lab servers and replay client. The gateway parses JSON-RPC itself (ADR-0003). |
+| A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the lab servers and replay client under both supported revisions (`VERIFY:` per-connection pinning to 2025-11-25, §1.3). The gateway parses JSON-RPC itself (ADR-0003). |
 
 ---
 
@@ -226,12 +248,13 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 |---|---|---|
 | `cmd/bulwark` | CLI entry point: `wrap`, `tools`, `policy`, `audit` | FR-027 |
 | `internal/jsonrpc` | Strict framing and parsing of newline-delimited JSON-RPC: size limits, duplicate-key rejection, UTF-8 validation, canonical re-serialization | FR-028, NFR-013 |
+| `internal/mcprev` | Protocol revision handling: detects each message's revision (per-request `_meta` for 2026-07-28, negotiated version for 2025-11-25), maps revision-specific shapes (handshake vs. `server/discover`, MRTR vs. server-initiated requests, change-notification forms) onto one internal model for the interceptors | FR-036 |
 | `internal/proxy` | Owns both pipes and the child process lifecycle. Tracks request IDs per direction, routes messages through the pipeline, issues gateway-originated requests in a reserved ID space | FR-020, FR-030, FR-031 |
 | `internal/pipeline` | Ordered interceptors keyed by (direction, method). Each returns *forward*, *modify*, or *block with error* | FR-020…025 |
-| `internal/registry` | JCS canonicalization, fingerprints, pin store (JSON file), `learn`/`warn`/`enforce` modes, diffs | FR-021, FR-030 |
-| `internal/analyzers` | Analyzer interface, text normalization helpers, the first four analyzers | FR-022 |
+| `internal/registry` | JCS canonicalization, whole-object fingerprints for tools and server metadata, pin store (JSON file), `learn`/`warn`/`enforce` modes, diffs | FR-021, FR-030, FR-033 |
+| `internal/analyzers` | Analyzer interface, text normalization helpers, the first four analyzers, applied to every model-visible channel in §4.5 | FR-022, FR-033, FR-034 |
 | `internal/policy` | Embedded OPA: decision-input builder (including derived attributes such as cleaned paths and URL hosts), prepared queries, decision combining | FR-023, FR-024, NFR-005 |
-| `internal/redact` | Secret detectors (patterns + entropy) for arguments and results | FR-025 |
+| `internal/redact` | Secret detectors (patterns + entropy) for arguments, MRTR input responses, and results | FR-025, FR-035 |
 | `internal/audit` | Hash-chained JSONL writer, `verify`, `tail` | FR-026, NFR-006 |
 | `internal/config` | YAML configuration with JSON Schema validation | — |
 | `internal/termsafe` | Neutralizes untrusted text (control characters, ANSI escapes, bidi controls) before printing it to a terminal | FR-029 |
@@ -239,10 +262,10 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 **Attack suite (`lab/`)**
 | Package | Responsibility | Key requirements |
 |---|---|---|
-| `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-06 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-032 |
+| `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-08 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-032 |
 | `lab/scenarios/*.yaml` | Scenario manifests: technique, mappings, replay script, expected observables per condition | FR-001, FR-004 |
-| `lab/replay` | Replay client: an MCP client (Go SDK) that executes a replay script and records the transcript | FR-003 |
-| `lab/suite` | Go tests: for each scenario × condition, start the stack, replay, read the observation log, assert | FR-004, NFR-008 |
+| `lab/replay` | Replay client: an MCP client (Go SDK) that executes a replay script under a chosen protocol revision and records the transcript | FR-003 |
+| `lab/suite` | Go tests: for each scenario × condition × revision, start the stack, replay, read the observation log, assert. All scenarios run under 2026-07-28; a compatibility subset (L-01, L-02, L-07) also runs under 2025-11-25 | FR-004, FR-036, NFR-008 |
 | `tools/ci-summary` | Renders suite results (JSON) as a Markdown table for the GitHub Actions job summary and the README | FR-005 |
 
 **Sink design:** lab servers never use the network. Their "exfiltration" tools append to an **observation log** file given by `BULWARK_LAB_OBS`, which the suite reads to compute observables. This is safer than a loopback listener and lets the suite run with networking fully disabled (NFR-003).
@@ -265,6 +288,23 @@ docs/                   ADRs, workflow, write-ups
 
 ### 4.4 Key flows
 
+**Server metadata (`server/discover` under 2026-07-28, `initialize` under 2025-11-25)**
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant B as Bulwark
+  participant U as Upstream
+  C->>B: server/discover (2026-07-28) or initialize (2025-11-25)
+  B->>U: forwarded (re-serialized)
+  U-->>B: supportedVersions / protocolVersion, capabilities, instructions, server info
+  B->>B: record revision(s), fingerprint metadata (JCS), compare with pin
+  B->>B: run analyzers on instructions and descriptive fields
+  B->>B: enforce + unapproved, changed, or high finding → remove instructions and free-text fields
+  B->>B: audit(metadata, findings, pin status)
+  B-->>C: re-serialized, possibly reduced result
+```
+Under 2026-07-28 a client may never call `server/discover`. Bulwark then issues its own `server/discover` (reserved ID namespace, FR-031) on the first client request, so server metadata is always pinned and audited even if it never reaches the client. `VERIFY:` whether clients obtain `instructions` by any other route in 2026-07-28.
+
 **Tool discovery (`tools/list`)**
 ```mermaid
 sequenceDiagram
@@ -281,7 +321,7 @@ sequenceDiagram
   B->>B: audit(discovery, findings, pin status)
   B-->>C: re-serialized, filtered result (id 7)
 ```
-Paginated results (`nextCursor`) are handled page by page. `notifications/tools/list_changed` from upstream is forwarded to the client and invalidates the gateway's cached view, so the next `tools/list` is re-checked.
+Paginated results (`nextCursor`) are handled page by page. A tool-change notification from upstream (`notifications/tools/list_changed` under 2025-11-25, or the tools change notification on the client's `subscriptions/listen` stream under 2026-07-28) is forwarded to the client and invalidates the gateway's cached view, so the next `tools/list` is re-checked. `ttlMs` and `cacheScope` hints are recorded in the audit log; how they feed the re-check schedule is decided in design 03.
 
 **Tool invocation (`tools/call`)**
 ```mermaid
@@ -303,11 +343,18 @@ sequenceDiagram
   else allow
     B->>U: tools/call, re-serialized, possibly redacted (id 9)
     U-->>B: result
-    B->>B: secret scan on result → redact
-    B-->>C: result (id 9)
+    alt resultType "input_required" (MRTR, 2026-07-28)
+      B->>B: analyze input requests (FR-034), audit
+      B-->>C: input_required result (id 9)
+      Note over C,B: the client retries with inputResponses as a NEW tools/call:<br/>full pipeline again, inputResponses secret-scanned and in the policy input (FR-035)
+    else complete
+      B->>B: secret scan on content, structuredContent → redact
+      B-->>C: result (id 9)
+    end
   end
-  B->>B: audit(call, decision, policy IDs, latency)
+  B->>B: audit(call, revision, decision, policy IDs, latency)
 ```
+**MRTR retries (FR-035):** under 2026-07-28, a server asks for more input by returning `input_required` instead of sending its own request. The client's answers travel back to the server inside the retried `tools/call`, which makes them an exfiltration channel. Bulwark therefore gives the retry no shortcut: it is pin-checked, secret-scanned, and evaluated by policy like any other call, with `input.request.input_responses` and `input.request.is_retry` available to policies (§5.3). Under 2025-11-25 the same requests arrive as server-initiated `sampling/createMessage`, `elicitation/create`, or `roots/list`; v0.1 passes those through and audits them (decision 6).
 **Verify before call (FR-030):** in `enforce` mode, the gateway re-checks the called tool's definition with its own `tools/list` when the last check is older than `pin_recheck_interval` (default: before every call). This catches a rug pull even when the server sends no `list_changed` notification and the client never re-lists. The cost is one extra local round trip per call. It can be relaxed in configuration.
 
 **Attack suite run (CI)**
@@ -319,8 +366,8 @@ sequenceDiagram
   participant L as bulwark-lab Lxx
   participant O as Observation log
   T->>T: fresh temp dir, BULWARK_LAB=1, BULWARK_LAB_OBS=path
-  T->>R: start with condition (none / bulwark-warn / bulwark-enforce)
-  R->>B: initialize, tools/list, tools/call… (replay script)
+  T->>R: start with condition (none / bulwark-warn / bulwark-enforce) and revision
+  R->>B: replay script (server/discover or initialize, tools/list, tools/call, MRTR retries…)
   B->>L: (forwarded or blocked)
   L->>O: record calls and "exfiltrated" canaries
   R-->>T: transcript (messages received)
@@ -328,17 +375,32 @@ sequenceDiagram
   T->>T: compute observables, assert expectations, emit results JSON
 ```
 
-**Decided in this draft** (§14.1): one process per server (no aggregation in v0.1), file-based sink, verify-before-call by default. **Deferred to design 03:** whether a deny is returned as a JSON-RPC error or as a tool result with `isError: true`.
+**Decided in this draft** (§14.1): one process per server (no aggregation in v0.1), file-based sink, verify-before-call by default, two supported revisions without translation, MRTR retries as full calls. **Deferred to design 03:** whether a deny is returned as a JSON-RPC error or as a tool result with `isError: true`.
+
+### 4.5 Model-visible channels
+Every place where server-supplied text can reach the model or the user, and what v0.1 does about it. This table bounds the claim in §1.1: a channel not marked **pinned** or **blocked** is a residual risk (§7.6).
+
+| # | Channel | Revision | Reaches | v0.1 handling | Requirement | Residual |
+|---|---|---|---|---|---|---|
+| CH-1 | Tool definitions (whole object) | both | Model | **Pinned, analyzed, hidden** in `enforce` until approved | FR-021, FR-022, FR-030 | AR-5 |
+| CH-2 | Server `instructions` and server info | both (`server/discover` or `initialize`) | Model (clients may add instructions to the model's context) | **Pinned, analyzed, stripped** in `enforce` until approved | FR-033 | AR-5 |
+| CH-3 | Tool results: `content`, `structuredContent` | both | Model | Secrets redacted; injection **not** detected in v0.1 | FR-025 | AR-7, AR-9 |
+| CH-4 | Prompts: `prompts/list` metadata, `prompts/get` messages | both | Model (when the user picks a prompt) | Analyzed and audited; not pinned or blocked | FR-034 | AR-8 |
+| CH-5 | Resources: list and template metadata, `resources/read` contents | both | Model | Metadata analyzed; contents secret-scanned; audited | FR-025, FR-034 | AR-8, AR-9 |
+| CH-6 | MRTR input requests (elicitation text, sampling prompts) | 2026-07-28 | User and model | Analyzed and audited; the answers are policy-checked on retry | FR-034, FR-035 | AR-8 |
+| CH-7 | Server-initiated sampling, elicitation, roots | 2025-11-25 | User and model | Passed through and audited | FR-026 | T-05 |
+| CH-8 | Upstream error messages and `data` | both | Model (often shown as tool output) | Secret-scanned and audited | FR-025 | AR-9 |
+| CH-9 | Logging and progress notifications | both (logging deprecated in 2026-07-28) | Usually user only (`VERIFY:` per client) | Rate-limited and audited | NFR-013 | AR-9 |
 
 ## 5. Detailed design 📝 (seed notes; revised in design 03)
 
 > Seed notes below predate design 02. Where they conflict with §4 (for example multi-server aggregation or session taint in v0.1), §4 wins.
 
 ### 5.1 Tool registry and pinning
-- Canonicalization: RFC 8785 JCS over `{server_id, name, title, description, inputSchema, outputSchema, annotations}`. Decide whether `annotations` count toward the fingerprint (recommendation: yes; any change is security-relevant).
+- Canonicalization: RFC 8785 JCS over `{server_id, tool}`, where `tool` is the **whole tool object** as received (decided in v0.7, decision 15). Annotations, `icons`, `_meta`, and fields added by later revisions all count. Fields can be excluded only through an explicit exclude list, which is empty by default, stored in the pin store, and audited when changed. Server metadata (FR-033) is fingerprinted the same way.
 - Pin store records: `server_id, tool_name, fingerprint, definition_snapshot, approved_by (role), approved_at, findings_at_approval`.
 - Diffs are shown as a unified text diff of descriptions plus a structural JSON diff of schemas.
-- `notifications/tools/list_changed` triggers re-discovery and re-evaluation of pins.
+- A tool-change notification (`notifications/tools/list_changed` under 2025-11-25, or via `subscriptions/listen` under 2026-07-28) triggers re-discovery and re-evaluation of pins.
 - **Server identity:** how is "the same server" established across runs? For stdio, a command + args + package version/hash. For HTTP, URL + TLS identity. `VERIFY:` whether the current MCP spec offers server identity metadata.
 
 ### 5.2 Static analyzers (definition inspection)
@@ -359,6 +421,7 @@ OPA/Rego, embedded ([ADR-0004](docs/adr/0004-policy-engine.md)). Decision input 
 {
   "tool": {"name": "http_post", "pin_status": "approved", "annotations": {"readOnlyHint": false}},
   "arguments": {"url": "https://api.example.com/v1/upload", "body": "…"},
+  "request": {"revision": "2026-07-28", "is_retry": false, "input_responses": null},
   "derived": {"url_scheme": "https", "url_host": "api.example.com", "path_clean": null, "args_bytes": 812},
   "findings": [{"analyzer": "secrets", "severity": "high", "location": "arguments.body"}],
   "mode": "enforce",
@@ -409,7 +472,7 @@ Channels: interactive CLI, webhook (Slack/Teams), and possibly MCP elicitation b
 See §6.3 for the record schema. Hash chain: `hash = SHA-256(prev_hash || canonical(record))`. Periodic checkpoints can be signed or anchored externally (v0.2).
 
 **Questions to resolve**
-1. Do annotations count toward fingerprints?
+1. ~~Do annotations count toward fingerprints?~~ Resolved in v0.7: the whole tool object counts (decision 15).
 2. How is server identity defined for stdio and HTTP?
 3. Tag tools with capabilities manually, by heuristics, or both (heuristics suggest, humans confirm)?
 4. Should argument redaction ever be silent, or should the agent always be told that redaction happened?
@@ -534,6 +597,8 @@ flowchart LR
 | M-5 | Data exfiltration through tool arguments | ASI02 Tool Misuse and Exploitation | LLM02 | `VERIFY:` exfiltration technique ID | Schema analyzer + argument redaction (FR-022, FR-025) | L-05 |
 | M-6 | Over-privileged tool use | ASI03 Identity and Privilege Abuse | `VERIFY:` Excessive Agency ID in the 2026 list | — | Default-deny policy with argument constraints (FR-023, FR-024) | Policy tests |
 | M-7 | No record of agent actions | ASI10 Rogue Agents (detection) | — | — | Hash-chained audit (FR-026) | Tamper tests |
+| M-8 | Poisoning through server metadata (`instructions`, server info) and other non-tool channels (prompts, resources) | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | AML.T0051 | Pin, analyze, and strip server metadata in `enforce` (FR-033); analyze and audit prompts and resources (FR-034) | L-07 |
+| M-9 | Solicitation and exfiltration through MRTR input requests (the server asks for data; the answer goes back to it) | ASI01 Agent Goal Hijack; ASI09 Human-Agent Trust Exploitation (`VERIFY:` title) | LLM01; LLM02 | AML.T0051 | Retry evaluated as a full call: secret scan of `inputResponses` + policy (FR-035); input requests analyzed (FR-034) | L-08 |
 
 > OWASP Agentic IDs and titles were confirmed against several sources in November 2026. `VERIFY:` the exact title of ASI06 (sources differ), and all ATLAS IDs other than AML.T0051, against atlas.mitre.org before v0.1.
 
@@ -543,8 +608,8 @@ flowchart LR
 | T-01 | TB3 | Tampering | **Parser differential:** a message with duplicate JSON keys (`"description"` twice) is read one way by Bulwark and another way by the client, so the analyzers inspect harmless text while the model sees the poison | Reject duplicate keys and invalid UTF-8; **forward the re-serialized form Bulwark inspected**, never the original bytes | FR-028 | Low |
 | T-02 | TB3 | Tampering | Unicode tricks (homoglyphs, zero-width characters, Tag-block characters, bidi controls) hide instructions from pattern matching | Analyzers inspect both raw and NFKC-normalized text; `unicode.hidden` flags invisible characters | FR-022 | Medium (new encodings) |
 | T-03 | TB3 | DoS | Oversized, deeply nested, or flooding messages (including notification storms) exhaust memory or CPU | Size and depth limits, bounded queues, rate limits on notifications; violations error out and are audited | NFR-013 | Low |
-| T-04 | TB3 | Spoofing | **Response ID confusion:** upstream answers with the ID of another request, or replies to gateway-originated requests to confuse the client | Per-direction ID tracking; gateway-originated requests use a reserved ID namespace and are never forwarded; unmatched responses are dropped and audited | FR-031 | Low |
-| T-05 | TB3 | Tampering | Server-initiated requests (sampling, elicitation) used to inject content or extract data | v0.1: passed through, **audited**, and flagged in `audit tail`; enforcement planned for v0.2 | FR-026 | Medium (accepted for v0.1) |
+| T-04 | TB3 | Spoofing | **Response ID confusion:** upstream answers with the ID of another outstanding request, or with the ID of a gateway-originated request (`server/discover`, re-check `tools/list`), to confuse the client | Outstanding-request tracking (client-to-server always; server-to-client too under 2025-11-25); gateway-originated requests use a reserved ID namespace and are never forwarded; unmatched responses are dropped and audited | FR-031 | Low |
+| T-05 | TB3 | Tampering | **2025-11-25 only:** server-initiated requests (sampling, elicitation, roots) used to inject content or extract data | v0.1: passed through, **audited**, and flagged in `audit tail`; enforcement planned for v0.2. Under 2026-07-28 the same capability arrives as MRTR and is covered by T-16 | FR-026 | Medium (accepted for v0.1) |
 | T-06 | TB3 | Tampering | **Behavioral rug pull:** definition stays the same but the tool's behavior changes | Out of scope for pinning (definitions only); argument policy and result redaction limit impact | FR-024, FR-025 | Medium (AR-4) |
 | T-07 | TB3 | Evasion | Payloads crafted to slip past analyzers (paraphrase, splitting across fields, base64) | Layered defense: pinning and policy don't depend on detection; adversarial corpus grows with each bypass | FR-006, FR-022 | Medium (AR-5) |
 | T-08 | TB4 | Tampering | Pins, policies, or config modified to approve a malicious tool | File permission checks at startup (warn if group- or world-writable); every pin change is audited; container wrapping keeps the upstream away from the files | FR-026 | **High without container** (AR-2) |
@@ -555,6 +620,9 @@ flowchart LR
 | T-13 | TB1 | Elevation | **Bypass:** the agent is configured to launch the server directly, not through Bulwark | Documented; `bulwark doctor` (later) checks known client configs | — | Medium (AR-3) |
 | T-14 | TB2 | Tampering | Supply-chain compromise of Bulwark or its dependencies | Pinned `go.sum`, `govulncheck` and dependency review in CI, SBOM, signed releases | NFR-012, NFR-015 | Low |
 | T-15 | TB2 | DoS | Policy engine error or panic leaves calls unchecked | Fail closed (NFR-005); panics in interceptors are recovered and become denials | NFR-005 | Low |
+| T-16 | TB3 | Info disclosure | **MRTR solicitation:** an `input_required` result asks the user or model for a secret or file contents, and the retried call carries the answer back to the server, bypassing checks that only look at ordinary arguments | Retry treated as a new `tools/call`: pin check, secret scan of `inputResponses`, policy with `input.request` (FR-035); input-request text analyzed and audited (FR-034) | FR-034, FR-035 | Medium (non-secret-shaped data still passes if policy allows the call) |
+| T-17 | TB1/TB3 | Evasion | **Revision confusion:** a message in an older, unknown, or mixed revision is shaped so that Bulwark's interceptors miss it (for example server metadata arriving through `initialize` when Bulwark expects `server/discover`, or a change notification in the other revision's form) | Per-message revision detection; both supported revisions map onto one internal model so every control applies to both; unsupported revisions rejected in `enforce`; compatibility subset of the suite runs under 2025-11-25 | FR-036 | Low |
+| T-18 | TB3 | Evasion | **Pin evasion through unhashed fields:** a server changes or poisons a tool field that the fingerprint does not cover (`icons`, `_meta`, a field from a newer revision) | Whole-object fingerprint with an explicit, audited exclude list (empty by default); unknown fields are kept and hashed, never dropped | FR-021, FR-028 | Low |
 
 ### 7.5 Attack suite threats
 | ID | Threat | Mitigation | Requirement |
@@ -573,9 +641,11 @@ flowchart LR
 | AR-5 | Analyzers can be evaded (T-07) | Detection is never complete | Pinning and policy work regardless of detection |
 | AR-6 | The audit chain can be rewritten wholesale by someone with write access (T-09) | Needs an external anchor | Signed checkpoints in v0.2 |
 | AR-7 | Prompt injection itself isn't prevented | NG1: Bulwark limits damage | — |
+| AR-8 | Prompts, resources, and MRTR input requests are **analyzed and audited but not pinned or blocked** in v0.1 (CH-4…CH-6) | Keeps v0.1 small; tool definitions and server metadata are the channels the model sees on every session | Review findings with `audit tail`; pinning and blocking for these channels in v0.2 |
+| AR-9 | Injected instructions inside tool results, resource contents, error messages, or notifications are **not detected** in v0.1 (CH-3, CH-5, CH-8, CH-9); only secrets are redacted | Detecting injection in arbitrary content needs the classifier tier (v0.3); detection is never complete (AR-5) | Egress policy and redaction limit what a hijacked agent can send (M-4); taint tracking in v0.2 |
 
 ### 7.7 Security requirements derived from this model
-These were added to §2 in v0.6: **FR-028** (strict parsing, forward what was inspected), **FR-029** (terminal-safe output), **FR-030** (verify before call), **FR-031** (request ID isolation), **FR-032** (lab binary guard), **NFR-013** (resource limits), **NFR-014** (no network listeners or connections), **NFR-015** (dependency hygiene).
+These were added to §2 in v0.6: **FR-028** (strict parsing, forward what was inspected), **FR-029** (terminal-safe output), **FR-030** (verify before call), **FR-031** (request ID isolation), **FR-032** (lab binary guard), **NFR-013** (resource limits), **NFR-014** (no network listeners or connections), **NFR-015** (dependency hygiene). Added in v0.7 from the design 02 review: **FR-033** (server metadata pinning), **FR-034** (analysis of prompts, resources, and MRTR input requests), **FR-035** (MRTR retries as full calls), **FR-036** (revision handling); FR-003, FR-021, FR-025, and FR-031 amended.
 
 ## 8. AI/ML design 📝 (seed notes)
 
@@ -606,7 +676,7 @@ Every NFR is checked by a CI job (NFR-002): load/latency test (NFR-004), fault i
 ### 10.3 Attack suite
 The attack scenarios are built **first** (M1, see §12). Each one starts as a test that the attack succeeds, and each Gateway feature is finished when its scenario is blocked or detected under `enforce`.
 
-`lab/` contains deliberately malicious, **harmless** MCP servers. "Exfiltration" goes to a loopback sink and "secrets" are fake canaries. Every scenario works with a single upstream server, matching v0.1 scope.
+`lab/` contains deliberately malicious, **harmless** MCP servers. "Exfiltration" goes to the observation log file (§4.2) and "secrets" are fake canaries. Every scenario works with a single upstream server, matching v0.1 scope. All scenarios run under revision 2026-07-28; L-01, L-02, and L-07 also run under 2025-11-25 to cover the compatibility path (FR-036).
 
 | Scenario | Attack (replayed) | Observables under `none` | Blocked or detected in v0.1 by | Later control |
 |---|---|---|---|---|
@@ -616,6 +686,8 @@ The attack scenarios are built **first** (M1, see §12). Each one starts as a te
 | L-04 Indirect injection | A tool result contains instructions to send a canary to an external URL | `canary_exfiltrated` | Egress domain allowlist (FR-024); secret redaction in arguments (FR-025) | Taint tracking (v0.2) |
 | L-05 Argument side channel | Schema adds a free-text `context` parameter that solicits secrets | `canary_exfiltrated` | Side-channel schema analyzer (FR-022); argument redaction (FR-025) | — |
 | L-06 Unicode smuggling | Unicode Tag-block characters encode hidden instructions | `poison_delivered` | `unicode.hidden` analyzer (FR-022) | — |
+| L-07 Poisoned server instructions | Server `instructions` (from `server/discover`, or `initialize` under 2025-11-25) tell the agent to read a canary file and send it out; tool definitions are clean | `poison_delivered` | Metadata analyzer finding → instructions stripped (FR-033) | Prompt and resource pinning (v0.2) |
+| L-08 MRTR solicitation | A tool answers with `input_required`, asking for "your API key to continue"; the scripted retry supplies a canary in `inputResponses` | `canary_exfiltrated` | Secret scan of `inputResponses` + policy on the retry (FR-035); input-request finding (FR-034) | Approval broker (v0.2) |
 
 **Replay, not live agents:** each scenario runs with the replay client under `none`, `bulwark-warn`, and `bulwark-enforce`, and asserts the expected observables (FR-004). The suite runs on every PR (FR-005). Optional live-model runs are a later feature (FR-046). Existing public resources (`VERIFY:` "Damn Vulnerable MCP Server", MCPTox, MCP-SafetyBench) are reused where licenses allow, mainly as sources of attack patterns and detection corpora.
 
@@ -628,9 +700,9 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | M0 | Design approved | Design review checklist passed |
-| M1 | **Attack suite + transparent stdio proxy + audit log** | L-01…L-06 run in CI under all conditions; attacks succeed under `none` and (as expected at this stage) also through the passthrough proxy; network-isolation test passes; audit chain verifies |
-| M2 | Pinning + static analyzers + CLI + detection corpora | L-01, L-02, L-03, L-06 blocked or detected under `enforce`; detection rate and false-positive rate reported in CI |
-| M3 | Policy engine + argument constraints + secret redaction + demo + release pipeline; **v0.1 release** | All six scenarios blocked or detected under `enforce`; NFR-004 met; signed release with SBOM; one-command demo; launch write-up drafted for the maintainer to publish |
+| M1 | **Attack suite + transparent stdio proxy (both revisions) + audit log** | L-01…L-08 run in CI under all conditions; attacks succeed under `none` and (as expected at this stage) also through the passthrough proxy; network-isolation test passes; audit chain verifies |
+| M2 | Pinning (tools and server metadata) + static analyzers on all channels + CLI + detection corpora | L-01, L-02, L-03, L-06, L-07 blocked or detected under `enforce`; detection rate and false-positive rate reported in CI |
+| M3 | Policy engine + argument constraints + secret redaction + MRTR retry checks + demo + release pipeline; **v0.1 release** | All eight scenarios blocked or detected under `enforce`; NFR-004 met; signed release with SBOM; one-command demo; launch write-up drafted for the maintainer to publish |
 | M4 | Streamable HTTP + multi-server aggregation + taint tracking + approval broker; **v0.2** | New scenarios for HTTP and taint pass |
 | M5 | Classifier tier (CPU, in CI) + OTel/OCSF export + optional live-model mode; **v0.3** | Classifier corpus results in CI |
 
@@ -646,6 +718,10 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | Lab sink | Observation log file | Loopback HTTP listener (needs networking in tests) | §4.2, decision 10 |
 | Rug-pull detection | Verify before call (gateway-initiated `tools/list`) | Rely on `list_changed` notifications only (misses silent changes) | §4.4, decision 11 |
 | Forwarding | Re-serialize the inspected message | Forward original bytes (parser-differential risk, T-01) | §7.4, decision 12 |
+| Protocol revisions | 2026-07-28 primary + 2025-11-25 compatibility, revision-aware, no translation | 2026-07-28 only (breaks with clients and servers still on 2025-11-25); 2025-11-25 only (outdated at launch); translating between revisions (large, error-prone surface) | §1.3, decision 14 |
+| Fingerprint scope | Whole object with an explicit exclude list | Fixed include list of fields (new or overlooked fields bypass pinning, T-18) | §5.1, decision 15 |
+| Non-tool channels | Pin + strip server metadata; analyze and audit prompts, resources, MRTR requests | Tool definitions only (leaves `instructions` open, B2); pin and block every channel in v0.1 (too large for the MVP) | §4.5, decision 16 |
+| MRTR retries | New `tools/call` through the full pipeline | Treat as continuation of an already-approved call (answers bypass policy, T-16) | §4.4, decision 17 |
 
 ## 14. Decision log and open questions
 
@@ -657,7 +733,7 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | 3 | v0.1 Gateway is stdio-only with one upstream server | Cuts the MVP to a size one person can deliver; covers the local-developer use case | — | 2026-11-26 |
 | 4 | $0 budget and fully automated testing: OSS dependencies, GitHub Free, all verification in CI | Maintainer constraints | — | 2026-11-26 |
 | 5 | Use MCPTox poisoned tool definitions as analyzer test data (license permitting) | Deterministic detection metric comparable with published research | — | 2026-11-26 |
-| 6 | Sampling/elicitation passed through and audited, not enforced, in v0.1 | Keeps the MVP small; still visible in audit logs | — | 2026-11-26 |
+| 6 | Sampling/elicitation passed through and audited, not enforced, in v0.1. *Amended v0.7:* applies to 2025-11-25 server-initiated requests; under 2026-07-28 these arrive as MRTR and the retry is checked (decision 17) | Keeps the MVP small; still visible in audit logs | — | 2026-11-26 |
 | 7 | Working agreement: Claude drafts with recommendations applied; maintainer reviews by PR | Maintainer has 1–2 h/week | — | 2026-11-26 |
 | 8 | Go for gateway, lab, and suite; MCP baseline 2026-07-28 | Single-binary releases, native OPA, stable official SDK | [ADR-0003](docs/adr/0003-implementation-language.md) | 2026-11-26 |
 | 9 | One gateway process per wrapped server in v0.1 | Simplest model; matches how MCP clients launch stdio servers | — | 2026-11-26 |
@@ -665,6 +741,10 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | 11 | Verify-before-call in `enforce` mode, default every call | Catches silent rug pulls; costs one local round trip | — | 2026-11-26 |
 | 12 | Forward re-serialized inspected messages; reject duplicate keys | Closes parser-differential bypasses (T-01) | — | 2026-11-26 |
 | 13 | OPA/Rego with default-deny combiner and gateway-derived attributes | Expressive, testable, widely recognized | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-26 |
+| 14 | Support 2026-07-28 (primary) and 2025-11-25 (compatibility); detect the revision per message; no translation; reject unsupported revisions in `enforce` | 2026-07-28 removed the handshake and server-initiated requests; both revisions will be in use at launch | [ADR-0003](docs/adr/0003-implementation-language.md) (amended) | 2026-11-26 |
+| 15 | Fingerprint the whole tool object (and server metadata), with an explicit exclude list that is empty by default | Fields outside a fixed include list would bypass pinning (T-18) | — | 2026-11-26 |
+| 16 | Inventory all model-visible channels (§4.5); pin and strip server metadata in v0.1; analyze and audit prompts, resources, and MRTR requests; state the rest as accepted risks AR-8, AR-9 | Closes the `instructions` gap without pinning every channel in the MVP; keeps the §1.1 claim honest | — | 2026-11-26 |
+| 17 | An MRTR retry is a new `tools/call` through the full pipeline | The retry carries server-requested data back to the server (T-16) | — | 2026-11-26 |
 
 ### 14.2 Open questions
 - Q1 Deny response format: JSON-RPC error vs. tool result with `isError: true` (design 03; test with real clients)
@@ -674,14 +754,14 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 ## 15. Spec backlog (draft)
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
-| 001 | Lab scenarios L-01…L-06 + manifests + observation log | FR-001, FR-002, FR-032, NFR-003 | M1 |
-| 002 | Replay client + scenario runner + CI results table | FR-003, FR-004, FR-005, NFR-008 | M1 |
-| 003 | stdio proxy passthrough + strict JSON-RPC handling + request ID isolation | FR-020, FR-028, FR-031, NFR-004, NFR-013, NFR-014 | M1 |
+| 001 | Lab scenarios L-01…L-08 + manifests + observation log | FR-001, FR-002, FR-032, NFR-003 | M1 |
+| 002 | Replay client (both revisions) + scenario runner + CI results table | FR-003, FR-004, FR-005, NFR-008 | M1 |
+| 003 | stdio proxy passthrough + strict JSON-RPC handling + request ID isolation + revision handling | FR-020, FR-028, FR-031, FR-036, NFR-004, NFR-013, NFR-014 | M1 |
 | 004 | Hash-chained audit log + `audit verify/tail` | FR-026, NFR-006 | M1 |
-| 005 | Fingerprinting + pin store + modes + verify-before-call | FR-021, FR-030 | M2 |
-| 006 | Static analyzers (first 4) + detection corpora | FR-022, FR-006 | M2 |
+| 005 | Fingerprinting (tools + server metadata) + pin store + modes + verify-before-call | FR-021, FR-030, FR-033 | M2 |
+| 006 | Static analyzers (first 4) on all channels + detection corpora | FR-022, FR-034, FR-006 | M2 |
 | 007 | `tools` CLI (list/diff/approve/reject) + terminal-safe output | FR-027, FR-029 | M2 |
-| 008 | Policy engine + argument constraints + `policy test` | FR-023, FR-024, NFR-005 | M3 |
+| 008 | Policy engine + argument constraints + MRTR retry checks + `policy test` | FR-023, FR-024, FR-035, NFR-005 | M3 |
 | 009 | Secret detection + redaction | FR-025 | M3 |
 | 010 | One-command demo + release pipeline (SBOM, signing, vuln scan) | FR-007, NFR-011, NFR-012, NFR-015 | M3 |
 | 011 | Streamable HTTP + multi-server aggregation | FR-040, FR-041 | M4 |
@@ -692,7 +772,9 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | 016 | Optional live-model mode | FR-046 | M5 |
 
 ## Appendix: References
-- Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28
+- Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28 (changelog not yet checked directly; see §1.3 `VERIFY:` list)
+- MCP blog, "The 2026-07-28 Specification": blog.modelcontextprotocol.io/posts/2026-07-28
+- Model Context Protocol specification, revision 2025-11-25 (compatibility target)
 - Official MCP Go SDK: github.com/modelcontextprotocol/go-sdk (v1.7.0)
 - Open Policy Agent: openpolicyagent.org
 - OWASP GenAI Security Project: Top 10 for LLM Applications 2026; Top 10 for Agentic Applications (Dec 2025): genai.owasp.org

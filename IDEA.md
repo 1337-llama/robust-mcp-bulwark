@@ -72,7 +72,7 @@ A small, well-engineered, well-documented open-source gateway that people can ad
 > **Build order is attacks first** ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended by [ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)). Each attack scenario is written first as a test, then the gateway feature that blocks it is built. This is test-driven development applied to security.
 
 ### MVP (v0.1)
-- **Attack suite:** six harmless lab scenarios, a scripted replay client, a local canary sink, and a CI results table (scenario × with/without Bulwark)
+- **Attack suite:** eight harmless lab scenarios, a scripted replay client, a local canary sink, and a CI results table (scenario × with/without Bulwark)
 - **Gateway (stdio):** transparent proxy; tool fingerprinting and pinning (`learn` / `warn` / `enforce`); static analyzers; per-call policy with argument constraints; secret redaction; hash-chained audit log; CLI
 - **Detection corpora:** analyzer detection rate measured on poisoned tool descriptions from MCPTox (license permitting), and false positive rate on real servers' tool definitions
 - **One-command demo** and a signed release with an SBOM
@@ -132,7 +132,7 @@ Streamable HTTP transport · multi-server aggregation · session taint tracking 
 | Q-D | Budget and testing | **Resolved:** $0; all testing automated in CI |
 | Q1 | Core language | Open (design 02, ADR) |
 | Q2 | Policy engine (Cedar vs. OPA) | Open (design 02, ADR) |
-| Q3 | Handling of sampling/elicitation | **Resolved:** passed through and audited in v0.1 |
+| Q3 | Handling of sampling/elicitation | **Resolved:** passed through and audited in v0.1 (2025-11-25); under 2026-07-28 they arrive as input requests, and the client's answers are checked like any tool call (DESIGN.md decision 17) |
 
 ## Maintainer notes
 

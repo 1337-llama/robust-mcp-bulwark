@@ -23,7 +23,10 @@ We will use **Go** for the gateway, the lab servers, the replay client, and the 
 
 - The gateway handles JSON-RPC at the **message level** with its own strict parser (FR-028), so it stays transparent to fields it doesn't know. It uses SDK types only where helpful.
 - The lab servers and replay client use the **official Go SDK** for protocol correctness.
-- **Protocol baseline:** MCP revision **2026-07-28**, the latest; the gateway forwards other negotiated versions unchanged and records them.
+- **Protocol baseline:** MCP revision **2026-07-28** (primary) plus **2025-11-25** (compatibility). 2026-07-28 removed the `initialize` handshake (each request carries its version in `_meta`), added `server/discover`, and replaced server-initiated requests with Multi Round-Trip Requests. Because both revisions will be in use at launch, the gateway detects the revision of each message, applies the same controls to both, and does not translate between them. Unsupported revisions are rejected in `enforce` mode (DESIGN.md §1.3, FR-036).
+
+## Amendment (2026-11-26, design 02 review)
+The first draft of this ADR said the gateway "forwards other negotiated versions unchanged". That described the 2025-11-25 handshake model, which 2026-07-28 removed. The baseline above replaces it. `VERIFY:` that Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
 
 ## Consequences
 - **Easier:** download-and-run releases; native embedding of OPA; fast tests; `go test` drives the attack suite directly; `govulncheck` for dependency scanning.

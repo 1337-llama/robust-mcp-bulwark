@@ -41,6 +41,8 @@ The repo includes an **attack suite**: deliberately malicious (harmless) MCP ser
 | L-04 Indirect injection → exfiltration | | |
 | L-05 Argument side channel | | |
 | L-06 Unicode smuggling | | |
+| L-07 Poisoned server instructions | | |
+| L-08 Input-request credential solicitation | | |
 
 ## Roadmap: attacks first, then defenses
 
