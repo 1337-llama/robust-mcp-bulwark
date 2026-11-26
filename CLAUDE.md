@@ -5,7 +5,7 @@ A security gateway for AI agents: an MCP proxy that pins and inspects tool defin
 **Purpose: a portfolio project for potential employers.** Optimize for shipped, tested, well-documented software that a reviewer can evaluate in 10 minutes, not for research.
 
 ## Current stage
-**Stage 2: Specs.** `DESIGN.md` is approved on merge of design 03 (v0.10; design review 1 in `docs/reviews/`). Next: spec 001 (attack suite with raw JSON-RPC replay client) and spec 002 (stdio proxy with audit log), each as its own PR (`spec.md` → `plan.md` → `tasks.md`). **No implementation code until a spec's status is `Ready`.** The repository is public, so CI on standard GitHub-hosted runners is free (DESIGN.md C-4).
+**Stage 2: Specs.** `DESIGN.md` v0.11.1 is approved (design review 1 in `docs/reviews/`). Specs are in `specs/` (index in `specs/README.md`); each spec's `spec.md`, `plan.md`, and `tasks.md` are reviewed together in one PR by an independent reviewer session and merged when no blockers remain. **No implementation code until a spec's status is `Ready`.** The repository is public, so CI on standard GitHub-hosted runners is free (DESIGN.md C-4).
 
 ## Working agreement (the maintainer has 1–2 hours per week)
 - **Claude drafts; the maintainer decides.** Don't wait on questions. Draft complete sections, specs, or code with your recommended answers applied. Each decision stands unless the maintainer changes it in review.
