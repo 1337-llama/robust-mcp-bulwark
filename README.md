@@ -31,7 +31,7 @@ It's a drop-in wrapper: `bulwark wrap -- <server command>`.
 
 ## Proven by attacks, not claims
 
-The repo includes an **attack suite**: deliberately malicious (harmless) MCP servers plus a scripted client that replays exactly what a hijacked agent would send. On every change, CI runs each attack twice: once directly, where the attack must succeed, and once through Bulwark, where it must be blocked or detected.
+The repo includes an **attack suite**: deliberately malicious (harmless) MCP servers plus a scripted client that replays exactly what a hijacked agent would send. On every change, CI runs each attack twice: once directly, where the attack must succeed, and once through Bulwark, where it must be blocked. The results table names the protection that stopped each attack.
 
 | Scenario | Without Bulwark | With Bulwark |
 |---|---|---|
@@ -41,6 +41,8 @@ The repo includes an **attack suite**: deliberately malicious (harmless) MCP ser
 | L-04 Indirect injection → exfiltration | | |
 | L-05 Argument side channel | | |
 | L-06 Unicode smuggling | | |
+| L-07 Poisoned server instructions | | |
+| L-08 Input-request credential solicitation | | |
 
 ## Roadmap: attacks first, then defenses
 
