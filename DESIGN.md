@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft: §1–§4 and §7 drafted (✅); §5–§6 seed notes, revised in design 03; others seeded (🌱) or not yet written (📝) |
-| Version | 0.8 |
+| Version | 0.9 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -20,6 +20,7 @@
 | 0.6 | 2026-11-26 | Design 02: §4 architecture (v0.1 stdio, attack suite components, verify-before-call), §7 threat model (STRIDE, mitigations mapping, accepted risks); ADR-0003 Go, ADR-0004 OPA; MCP baseline 2026-07-28; FR-028…032, NFR-013…015; file-based sink |
 | 0.7 | 2026-11-26 | Review fixes B1/B2: protocol handling rewritten for 2026-07-28 (no `initialize`, per-request `_meta`, `server/discover`, MRTR, `subscriptions/listen`) with 2025-11-25 compatibility; model-visible channel inventory (§4.5); whole-object tool fingerprints; FR-033…036; T-16…T-18; AR-8, AR-9; scenarios L-07, L-08 |
 | 0.8 | 2026-11-26 | Review fixes S1–S10: verify-before-call re-scoped (stale-only); policies bound to server identity and declared argument roles; `ask` = deny in v0.1 (no terminal prompt); per-control attribution in the suite; FR-032 → FR-008; NFR-003/004/010/014 made automatable and non-flaky; OWASP/ATLAS mappings corrected; CI budget; specs merged 10 → 8 with a cut line (§12.1); lossless re-serialization; T-19, AR-10, AR-11; decisions 18–24 |
+| 0.9 | 2026-11-26 | §1.3 `VERIFY:` items (a)–(e) resolved against the official 2026-07-28 changelog, schema, and stdio, MRTR, and `server/discover` pages (spec repository); SEP citation corrected; stdio rule "server MUST NOT write requests" and MRTR method scope added to FR-035, FR-036, and T-17; tool-change notification wording made exact |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -69,17 +70,18 @@ flowchart LR
 ### 1.3 Target protocol revision
 v0.1 targets MCP specification revision **2026-07-28**, the latest at the time of drafting, supported by the official Go SDK v1.7.0 (ADR-0003). It also supports **2025-11-25** for compatibility, because clients and servers in the field will speak it for some time. Bulwark is **revision-aware but not a translator**: it forwards each message in the revision the sender used and applies the same controls in both.
 
-What changed in 2026-07-28 that matters to Bulwark (source: the official release post, blog.modelcontextprotocol.io/posts/2026-07-28; the draft `server/discover` spec page):
+What changed in 2026-07-28 that matters to Bulwark. Source: the official changelog, `schema.ts`, and the stdio transport, MRTR, and `server/discover` pages for revision 2026-07-28 in the specification repository (github.com/modelcontextprotocol/modelcontextprotocol, `main`, read 2026-11-26).
 
 | Area | 2025-11-25 | 2026-07-28 | Bulwark impact |
 |---|---|---|---|
-| Handshake | `initialize` / `initialized`; version negotiated once | Handshake **removed** (SEP-2575, SEP-2567). Each request carries its protocol version, client identity, and client capabilities in `_meta` (keys under `io.modelcontextprotocol/`) | The revision is determined **per message**, not per connection (FR-036) |
-| Server metadata | `InitializeResult`: `serverInfo`, `capabilities`, `instructions` | `server/discover` result: `supportedVersions`, `capabilities`, `instructions`, cache hints; server name and version in `_meta['io.modelcontextprotocol/serverInfo']`. Servers must implement it; clients may skip it | Server metadata is pinned and analyzed from either source (FR-033) |
-| Server-to-client requests | `sampling/createMessage`, `elicitation/create`, `roots/list` | Replaced by **Multi Round-Trip Requests (MRTR)**: the server returns `resultType: "input_required"` with the requests it needs answered, and the client retries the original call with `inputResponses`. Roots, Sampling, and Logging deprecated (SEP-2577), still working for at least 12 months | MRTR input requests are analyzed and audited; the retry is a new `tools/call` through the full pipeline (FR-034, FR-035) |
-| Change notifications | `notifications/tools/list_changed` | Delivered on a client-opened `subscriptions/listen` stream, opted into per notification type | Both forms invalidate Bulwark's cached tool view (§4.4) |
-| List caching | — | List results carry `ttlMs` and `cacheScope` | Recorded; used by the pin re-check schedule (design 03) |
+| Handshake | `initialize` / `initialized`; version negotiated once | Handshake **removed** (SEP-2575). Each request carries `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`, and SHOULD carry `io.modelcontextprotocol/clientInfo`. A version mismatch returns `UnsupportedProtocolVersionError` (code -32022). (SEP-2567 is the separate removal of HTTP sessions.) | The revision is determined **per message**, not per connection (FR-036) |
+| Server metadata | `InitializeResult`: `serverInfo`, `capabilities`, `instructions` | `server/discover` result (`DiscoverResult`): `supportedVersions`, `capabilities`, optional `instructions`, plus required `ttlMs` and `cacheScope`. Servers SHOULD put `io.modelcontextprotocol/serverInfo` in each result's `_meta`. Servers MUST implement it; clients MAY call it first or use it as a backward-compatibility probe on stdio. `instructions` appears nowhere else in the 2026-07-28 schema | Server metadata is pinned and analyzed from either source (FR-033) |
+| Server-to-client requests | `sampling/createMessage`, `elicitation/create`, `roots/list` | Replaced by **Multi Round-Trip Requests (MRTR)** (SEP-2322). On stdio the server **MUST NOT** write JSON-RPC requests to stdout. Instead it returns an `InputRequiredResult` (`resultType: "input_required"`) with an `inputRequests` map (server-assigned keys; values are `ElicitRequest`, `CreateMessageRequest`, or `ListRootsRequest`) and/or an opaque `requestState`. The client retries the original request **with a new JSON-RPC `id`**, carrying `inputResponses` under the same keys and echoing `requestState` unchanged. Only `tools/call`, `prompts/get`, and `resources/read` may return `input_required`. Roots, Sampling, and Logging are deprecated (SEP-2577), with a minimum 12-month window | MRTR input requests are analyzed and audited; the retry is a new `tools/call` through the full pipeline (FR-034, FR-035) |
+| Change notifications | `notifications/tools/list_changed` | Same method name (`notifications/tools/list_changed`), but delivered **only** if the client opened `subscriptions/listen` with the `toolsListChanged` filter; tagged with `io.modelcontextprotocol/subscriptionId` (the listen request's `id`) | Both forms invalidate Bulwark's cached tool view (§4.4). A client that never subscribes gets no notification, so Bulwark relies on `ttlMs` and max-age re-checks (FR-030) |
+| List caching | — | `ttlMs` and `cacheScope` required on `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/read`, and `resources/templates/list` (SEP-2549) | Recorded; used by the pin re-check schedule (design 03) |
+| Removed methods | `ping`, `logging/setLevel`, `notifications/roots/list_changed` | Removed. Log level is set per request with `io.modelcontextprotocol/logLevel` in `_meta`; servers MUST NOT send `notifications/message` for requests without it (SEP-2575) | Under 2026-07-28 these methods are unknown and handled like any unknown method |
 
-Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines (2025-11-25). `VERIFY:` before spec 002, against the official 2026-07-28 changelog and schema (not reachable from the drafting environment): (a) stdio framing is unchanged; (b) the exact `_meta` key that carries the protocol version on stdio (the release post shows an HTTP header plus `_meta` client info); (c) the `server/discover` result fields above match the final revision, not only the draft page; (d) the notification method names delivered on `subscriptions/listen`; (e) how an MRTR retry is correlated with the original call; (f) whether Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
+**Stdio framing is unchanged in 2026-07-28:** one newline-delimited JSON-RPC message per line, no embedded newlines; nothing but valid MCP messages on stdout; stderr is free-form logging. On stdio, all messages share one channel: responses (correlated by `id`), notifications tied to an in-flight request (`notifications/progress`, `notifications/message`), and notifications for an active `subscriptions/listen` (correlated by `io.modelcontextprotocol/subscriptionId`). A dual-revision client SHOULD probe with `server/discover` first and fall back to `initialize` only on a non-modern error or a timeout. Remaining item: `VERIFY:` whether Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests (tracked in ADR-0003).
 
 ### 1.4 Glossary
 | Term | Definition |
@@ -138,8 +140,8 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | FR-031 | Gateway shall track outstanding request IDs (client-to-server always; server-to-client too under 2025-11-25), use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
 | FR-033 | Gateway shall fingerprint, pin, and analyze **server metadata** (`instructions`, server info, capabilities) from `server/discover` (2026-07-28) or `initialize` (2025-11-25). In `enforce` mode, unapproved or changed metadata, or metadata with high-severity findings, has `instructions` and other free-text descriptive fields removed before forwarding until approved (name and version are kept). | MVP | G2 (M-8, B2) |
 | FR-034 | Gateway shall run the FR-022 analyzers on prompts (`prompts/list` metadata and `prompts/get` messages), resources (`resources/list` and template metadata), and MRTR input requests, and audit the findings. v0.1 does not block or pin these (AR-8). | MVP | G2 (M-8, M-9) |
-| FR-035 | Gateway shall treat an MRTR retry (a `tools/call` carrying `inputResponses`) as a new `tools/call`: pin check, secret scan of `inputResponses`, and policy evaluation with the input responses in the decision input. | MVP | G3 (M-9, T-16) |
-| FR-036 | Gateway shall determine each message's protocol revision (per request under 2026-07-28; from the negotiated version under 2025-11-25), apply the same controls under both supported revisions, and record the revision in the audit log. Messages in an unsupported or unrecognizable revision are rejected in `enforce` mode and forwarded with an audit record in `learn` and `warn` modes. | MVP | G2 (T-17) |
+| FR-035 | Gateway shall treat an MRTR retry (a `tools/call` carrying `inputResponses`) as a new `tools/call`: pin check, secret scan of `inputResponses`, and policy evaluation with the input responses in the decision input. The retry has a new JSON-RPC `id` (MRTR rule), so Bulwark matches it to the earlier `input_required` result by server, method, tool name, and `requestState`; `requestState` is forwarded byte-for-byte and never inspected or modified. `inputResponses` keys that the server never requested are recorded as an `mrtr.unsolicited_response` finding, which the example policies deny. | MVP | G3 (M-9, T-16) |
+| FR-036 | Gateway shall determine each message's protocol revision (per request under 2026-07-28; from the negotiated version under 2025-11-25), apply the same controls under both supported revisions, and record the revision in the audit log. Messages in an unsupported or unrecognizable revision are rejected in `enforce` mode and forwarded with an audit record in `learn` and `warn` modes. Under 2026-07-28, a JSON-RPC **request** from the server on stdout, or an `input_required` result on any method other than `tools/call`, `prompts/get`, or `resources/read`, is a protocol violation: blocked in `enforce`, audited in all modes. | MVP | G2 (T-17) |
 
 **Later (v0.2+)**
 | ID | Requirement | Priority |
@@ -304,7 +306,7 @@ sequenceDiagram
   B->>B: audit(metadata, findings, pin status)
   B-->>C: re-serialized, possibly reduced result
 ```
-Under 2026-07-28 a client may never call `server/discover`. Bulwark then issues its own `server/discover` (reserved ID namespace, FR-031) on the first client request, so server metadata is always pinned and audited even if it never reaches the client. `VERIFY:` whether clients obtain `instructions` by any other route in 2026-07-28.
+Under 2026-07-28 a client may never call `server/discover`. Bulwark then issues its own `server/discover` (reserved ID namespace, FR-031) on the first client request, so server metadata is always pinned and audited even if it never reaches the client. This covers every route: in the 2026-07-28 schema, `instructions` appears only in `DiscoverResult`.
 
 **Tool discovery (`tools/list`)**
 ```mermaid
@@ -322,7 +324,7 @@ sequenceDiagram
   B->>B: audit(discovery, findings, pin status)
   B-->>C: re-serialized, filtered result (id 7)
 ```
-Paginated results (`nextCursor`) are handled page by page. A tool-change notification from upstream (`notifications/tools/list_changed` under 2025-11-25, or the tools change notification on the client's `subscriptions/listen` stream under 2026-07-28) is forwarded to the client and invalidates the gateway's cached view, so the next `tools/list` is re-checked. `ttlMs` and `cacheScope` hints are recorded in the audit log; how they feed the re-check schedule is decided in design 03.
+Paginated results (`nextCursor`) are handled page by page. A tool-change notification from upstream (`notifications/tools/list_changed` in both revisions; under 2026-07-28 it arrives only on a client-opened `subscriptions/listen` stream and carries `io.modelcontextprotocol/subscriptionId`) is forwarded to the client and invalidates the gateway's cached view, so the next `tools/list` is re-checked. `ttlMs` and `cacheScope` hints are recorded in the audit log; how they feed the re-check schedule is decided in design 03.
 
 **Tool invocation (`tools/call`)**
 ```mermaid
@@ -347,7 +349,7 @@ sequenceDiagram
     alt resultType "input_required" (MRTR, 2026-07-28)
       B->>B: analyze input requests (FR-034), audit
       B-->>C: input_required result (id 9)
-      Note over C,B: the client retries with inputResponses as a NEW tools/call:<br/>full pipeline again, inputResponses secret-scanned and in the policy input (FR-035)
+      Note over C,B: client retries as a NEW tools/call<br/>(new id, inputResponses + requestState):<br/>full pipeline again, inputResponses<br/>secret-scanned and in the policy input (FR-035)
     else complete
       B->>B: secret scan on content, structuredContent → redact
       B-->>C: result (id 9)
@@ -629,7 +631,7 @@ flowchart LR
 | T-14 | TB2 | Tampering | Supply-chain compromise of Bulwark or its dependencies | Pinned `go.sum`, `govulncheck` and dependency review in CI, SBOM, signed releases | NFR-012, NFR-015 | Low |
 | T-15 | TB2 | DoS | Policy engine error or panic leaves calls unchecked | Fail closed (NFR-005); panics in interceptors are recovered and become denials | NFR-005 | Low |
 | T-16 | TB3 | Info disclosure | **MRTR solicitation:** an `input_required` result asks the user or model for a secret or file contents, and the retried call carries the answer back to the server, bypassing checks that only look at ordinary arguments | Retry treated as a new `tools/call`: pin check, secret scan of `inputResponses`, policy with `input.request` (FR-035); input-request text analyzed and audited (FR-034) | FR-034, FR-035 | Medium (non-secret-shaped data still passes if policy allows the call) |
-| T-17 | TB1/TB3 | Evasion | **Revision confusion:** a message in an older, unknown, or mixed revision is shaped so that Bulwark's interceptors miss it (for example server metadata arriving through `initialize` when Bulwark expects `server/discover`, or a change notification in the other revision's form) | Per-message revision detection; both supported revisions map onto one internal model so every control applies to both; unsupported revisions rejected in `enforce`; compatibility subset of the suite runs under 2025-11-25 | FR-036 | Low |
+| T-17 | TB1/TB3 | Evasion | **Revision confusion:** a message in an older, unknown, or mixed revision is shaped so that Bulwark's interceptors miss it (for example server metadata arriving through `initialize` when Bulwark expects `server/discover`, or a change notification in the other revision's form) | Per-message revision detection; both supported revisions map onto one internal model so every control applies to both; unsupported revisions rejected in `enforce`; compatibility subset of the suite runs under 2025-11-25; under 2026-07-28, server-originated requests and `input_required` on non-MRTR methods are treated as violations | FR-036 | Low |
 | T-18 | TB3 | Evasion | **Pin evasion through unhashed fields:** a server changes or poisons a tool field that the fingerprint does not cover (`icons`, `_meta`, a field from a newer revision) | Whole-object fingerprint with an explicit, audited exclude list (empty by default); unknown fields are kept and hashed, never dropped | FR-021, FR-028 | Low |
 | T-19 | TB4 | Info disclosure | **Policy as an exfiltration path:** a policy file (malicious, or copied carelessly) uses OPA network or runtime built-ins such as `http.send` to send decision inputs, which include arguments, to a remote host, or reads the environment | Policies compiled with an OPA capabilities set that removes network and runtime built-ins; loading a policy that uses them fails (ADR-0004) | NFR-014 | Low |
 
@@ -805,7 +807,7 @@ v0.1 is planned as **8 specs** (merged from 10 in v0.8 to fit the review budget,
 | 014 | Optional live-model mode | FR-046 | M5 |
 
 ## Appendix: References
-- Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28 (changelog not yet checked directly; see §1.3 `VERIFY:` list)
+- Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28; source files (changelog, `schema/2026-07-28/schema.ts`, stdio transport, MRTR pattern, `server/discover`) checked in the specification repository github.com/modelcontextprotocol/modelcontextprotocol on 2026-11-26
 - MCP blog, "The 2026-07-28 Specification": blog.modelcontextprotocol.io/posts/2026-07-28
 - Model Context Protocol specification, revision 2025-11-25 (compatibility target)
 - Official MCP Go SDK: github.com/modelcontextprotocol/go-sdk (v1.7.0)
