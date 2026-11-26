@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.2 |
+| Version | 0.11.3 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -25,6 +25,7 @@
 | 0.11 | 2026-11-26 | Independent review of design 03: B1 fixed by the policy model "allow by pin, restrict with deny" (decision 35); MRTR checks on all three methods (S1, decision 36); JSON Pointer locations everywhere (S2); secret and MRTR blocks enforced by the gateway, independent of policy (S3); replay client wording (S4); re-check rate limit (S5, decision 37); requirement-to-test check (S6); nits N1–N5 |
 | 0.11.1 | 2026-11-26 | Re-check nits: example restrictions keyed on server and declared argument role instead of tool name, plus a `roles-reviewed` rule so later-approved tools can't bypass them; `egress_url` row wording. Example policy run under OPA 1.22.4 with 8 unit tests; this found that inline `not x in {...}` did not fail closed, so checks now use named helper rules |
 | 0.11.2 | 2026-11-26 | From the spec 001 review: configuration keys `analyzers.enabled` and `mrtr.mode` added to §6.3 (needed to enable one control per suite run, FR-004); §6.7 points to the full manifest format |
+| 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -264,7 +265,7 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 | `internal/redact` | Secret detectors (patterns in v0.1; entropy later) for arguments, MRTR input responses, and results | FR-025, FR-035 |
 | `internal/audit` | Hash-chained JSONL writer, `verify`, `tail` | FR-026, NFR-006 |
 | `internal/config` | YAML configuration with JSON Schema validation | — |
-| `internal/termsafe` | Neutralizes untrusted text (control characters, ANSI escapes, bidi controls) before printing it to a terminal | FR-029 |
+| `internal/termsafe` | Neutralizes untrusted text before printing it to a terminal: every code point in Unicode categories Cc, Cf, Zl, and Zp is shown as `\u{XXXX}` (controls, ANSI escapes, bidi and zero-width characters, Tag-block characters) | FR-029 |
 
 **Attack suite (`lab/`)**
 | Package | Responsibility | Key requirements |
@@ -774,9 +775,12 @@ limits:
 | Call to a hidden or unapproved tool | JSON-RPC error `-32602`, message `Unknown tool: <name>` | The same answer a server gives for a tool it doesn't list (MCP 2026-07-28 tools spec; Go SDK uses the same code), so hiding doesn't leak the tool's existence |
 | Policy deny or `approval_required` | **Tool result** with `isError: true` (and `resultType: "complete"` under 2026-07-28); text: `Blocked by MCP Bulwark (policy <id>). The call was not sent to the server.` | The spec says clients SHOULD show tool execution errors to the model, so it can adjust instead of retrying blindly. The text contains only operator-defined IDs, never request data |
 | Unknown or unsupported revision (`enforce`) | JSON-RPC error `-32022` `UnsupportedProtocolVersionError` with the supported list | Code reserved by the 2026-07-28 specification |
+| Line that is not valid JSON | JSON-RPC error `-32700` (Parse error), `id: null` | JSON-RPC 2.0 §5.1 |
 | Duplicate keys, invalid UTF-8, lone surrogates | JSON-RPC error `-32600` (Invalid Request) | Valid-JSON-but-rejected messages; `-32700` only for unparseable lines |
 | Size, depth, or outstanding-request limit | JSON-RPC error `-32010` (implementation-defined range `-32000…-32019`) | Distinguishable in logs from spec errors |
 | Server-originated request under 2026-07-28 (`enforce`) | Not forwarded; the server gets `-32601` (Method not found) | The spec forbids servers writing requests on stdio |
+
+**Addressing errors for rejected messages:** when Bulwark can't parse a message strictly, it finds the recipient with a separate best-effort scan, used only for that purpose. The error's `id` is the message's top-level `id` if it appears exactly once; otherwise it is `null` (JSON-RPC 2.0 §5). Oversized lines are discarded to the next newline and answered with `-32010` and `id: null`. Spec 002 AC-7 and AC-26a give the full routing rules, including blocked responses and notifications.
 
 The deny-format question (Q1 in v0.9) is closed by this table. A test against the official Go SDK client checks that a policy deny arrives as a normal tool result with `IsError` set, and a hidden tool as a protocol error.
 
@@ -901,7 +905,7 @@ flowchart LR
 | AR-3 | Bypass through misconfiguration (T-13) | Local tool; can't control the client | Documentation; `doctor` check later |
 | AR-4 | Tool behavior isn't pinned, only definitions (T-06) | Behavior can't be fingerprinted from the protocol | Argument policy, redaction; taint tracking in v0.2 |
 | AR-5 | Analyzers can be evaded (T-07) | Detection is never complete | Pinning and policy work regardless of detection |
-| AR-6 | The audit chain can be rewritten wholesale by someone with write access (T-09) | Needs an external anchor | Signed checkpoints in v0.2 |
+| AR-6 | The audit chain can be rewritten wholesale by someone with write access (T-09) | Needs an external anchor | Signed checkpoints in v0.2. Records are `fsync`ed at least once per second, so up to one second of records can also be lost in a crash |
 | AR-7 | Prompt injection itself isn't prevented | NG1: Bulwark limits damage | — |
 | AR-8 | Prompts, resources, and MRTR input requests are **analyzed and audited but not pinned or blocked** in v0.1 (CH-4…CH-6) | Keeps v0.1 small; tool definitions and server metadata are the channels the model sees on every session | Review findings with `audit tail`; pinning and blocking for these channels in v0.2 |
 | AR-9 | Injected instructions inside tool results, resource contents, error messages, or notifications are **not detected** in v0.1 (CH-3, CH-5, CH-8, CH-9); only secrets are redacted | Detecting injection in arbitrary content needs the classifier tier (v0.3); detection is never complete (AR-5) | Egress policy and redaction limit what a hijacked agent can send (M-4); taint tracking in v0.2 |
@@ -1115,7 +1119,7 @@ v0.1 is planned as **8 specs** (merged from 10 in v0.8 to fit the review budget,
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
 | 001 | Attack suite: lab scenarios L-01…L-08, manifests, observation log, lab guard, replay client (both revisions), runner, CI skeleton and results table | FR-001…FR-005, FR-008, NFR-001, NFR-002, NFR-003, NFR-008, NFR-009, NFR-010 | M1 |
-| 002 | stdio proxy: strict JSON-RPC, request IDs, revision handling; hash-chained audit log + `audit verify/tail`; terminal-safe output | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-006, NFR-007, NFR-013, NFR-014 | M1 |
+| 002 | stdio proxy: strict JSON-RPC, request IDs, revision handling; hash-chained audit log + `audit verify/tail`; terminal-safe output | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-005, NFR-006, NFR-007, NFR-013, NFR-014 | M1 |
 | 003 | Fingerprinting (tools + server metadata) + pin store + modes + verify-before-call | FR-021, FR-030, FR-033 | M2 |
 | 004 | Static analyzers (first 4) on all channels + detection corpora | FR-006, FR-022, FR-034 | M2 |
 | 005 | `tools` CLI (list/diff/approve/reject) | FR-027 (reuses FR-029 from spec 002) | M2 |
