@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.3 |
+| Version | 0.11.4 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -26,6 +26,7 @@
 | 0.11.1 | 2026-11-26 | Re-check nits: example restrictions keyed on server and declared argument role instead of tool name, plus a `roles-reviewed` rule so later-approved tools can't bypass them; `egress_url` row wording. Example policy run under OPA 1.22.4 with 8 unit tests; this found that inline `not x in {...}` did not fail closed, so checks now use named helper rules |
 | 0.11.2 | 2026-11-26 | From the spec 001 review: configuration keys `analyzers.enabled` and `mrtr.mode` added to §6.3 (needed to enable one control per suite run, FR-004); §6.7 points to the full manifest format |
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
+| 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -491,7 +492,7 @@ This identifies *what was asked to launch*, not every file the server loads. A c
 | `warn` | Forwarded; `pin.unapproved` / `pin.changed` finding | Forwarded; finding | Forwarded; finding |
 | `enforce` | **Hidden** from `tools/list`; calls get "Unknown tool" | `instructions` and free-text fields **stripped** | Tool **hidden** / metadata **stripped** until approved |
 
-**Re-check schedule (FR-030):** the tool view becomes stale after a `ToolViewStale` event, or when its age exceeds `min(ttlMs, pin_recheck_max_age)`. A `ttlMs` of 0 is treated as no hint. In every case, the gateway re-checks **at most once per `pin_recheck_min_age`** (default 30 s), so neither a tiny `ttlMs` nor a stream of change notifications can force a re-check before every call. The gateway's own `tools/list` follows every `nextCursor` page.
+**Re-check schedule (FR-030):** the tool view becomes stale after a `ToolViewStale` event, or when its age exceeds `min(ttlMs, pin_recheck_max_age)`. A `ttlMs` of 0 is treated as no hint. In every case, the gateway re-checks **at most once per `pin_recheck_min_age`** (default 30 s), so neither a tiny `ttlMs` nor a stream of change notifications can force a re-check before every call. A change to the pin store on disk, for example an approval made with the CLI, also marks the view stale (spec 003 AC-16). The gateway's own `tools/list` follows every `nextCursor` page.
 
 **Diffs** (`bulwark tools diff`) show a path-based structural diff of the JSON plus a line diff for long strings. All untrusted text goes through `termsafe` (FR-029).
 
