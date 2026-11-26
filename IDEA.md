@@ -1,15 +1,15 @@
-# Agent Firewall: Idea Brief
+# MCP Bulwark: Idea Brief
 
 | Field | Value |
 |---|---|
 | Status | Draft |
 | Theme | Securing AI |
-| Working name | Agent Firewall (placeholder; check for collisions before publishing) |
+| Repository | `robust-mcp-bulwark` · CLI name: `bulwark` |
 | Last updated | 2026-11-26 |
 
 ## Elevator pitch
 
-Agent Firewall is a **security gateway that sits between AI agents and the MCP servers that give them tools**. It pins and inspects every tool definition, enforces least-privilege policy-as-code on every tool call, tracks untrusted data through an agent session to block exfiltration paths, and writes a tamper-evident audit trail. It is a drop-in proxy: point the agent at the gateway instead of the server.
+MCP Bulwark is a **security gateway that sits between AI agents and the MCP servers that give them tools**. It pins and inspects every tool definition, enforces least-privilege policy-as-code on every tool call, tracks untrusted data through an agent session to block exfiltration paths, and writes a tamper-evident audit trail. It is a drop-in proxy: point the agent at the gateway instead of the server.
 
 ## Problem
 

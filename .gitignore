@@ -1,0 +1,21 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Go
+/bin/
+
+# Local state and logs (never commit audit logs or pin stores from real use)
+state/
+logs/
+*.db
+
+# Secrets
+.env
+.env.*

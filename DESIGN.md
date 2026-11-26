@@ -1,10 +1,10 @@
-# Agent Firewall: Design Document
+# MCP Bulwark: Design Document
 
 ## Document control
 | Field | Value |
 |---|---|
 | Status | Draft (seeded; sections marked 🌱 have starting material, 📝 are not yet written) |
-| Version | 0.2 |
+| Version | 0.3 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -14,8 +14,9 @@
 |---|---|---|
 | 0.1 | 2026-11-25 | Initial skeleton with seeded architecture, flows, and threat model starters |
 | 0.2 | 2026-11-26 | Lab-first roadmap: attack lab and baseline benchmark moved to M1; added FR-017/FR-018; spec backlog renumbered |
+| 0.3 | 2026-11-26 | Moved to standalone repository; renamed to MCP Bulwark (CLI `bulwark`); decision 1 recorded as ADR-0001 |
 
-> **How to use this document:** follow [docs/WORKFLOW.md](../docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
+> **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
 ---
 
@@ -24,7 +25,7 @@
 ### 1.1 Background
 The Model Context Protocol (MCP) is a JSON-RPC 2.0 protocol. Through it, an **MCP client** (inside an agent host such as an IDE, desktop assistant, or custom agent) discovers and invokes **tools**, **resources**, and **prompts** exposed by **MCP servers**. Transports are **stdio** (the server runs as a local subprocess) and **Streamable HTTP** (a remote server). Everything a server says about its tools reaches the model's context, which makes the client–server boundary a security boundary that is rarely enforced.
 
-Agent Firewall is an **MCP-aware intermediary**. To the client it acts as a server, and to each upstream server it acts as a client. That position lets it inspect and control every message.
+MCP Bulwark is an **MCP-aware intermediary**. To the client it acts as a server, and to each upstream server it acts as a client. That position lets it inspect and control every message.
 
 ### 1.2 Scope
 - **In scope:** tools (`tools/list`, `tools/call`, `notifications/tools/list_changed`). Resources and prompts get at least pinning and audit.
@@ -121,7 +122,7 @@ flowchart LR
   subgraph Host["Agent host (trust boundary TB1)"]
     A["AI agent + MCP client"]
   end
-  subgraph GW["Agent Firewall (TB2)"]
+  subgraph GW["MCP Bulwark (TB2)"]
     direction TB
     T["Transport adapters<br/>stdio · Streamable HTTP"]
     S["Session manager"]
@@ -293,12 +294,12 @@ See §6.3 for the record schema. Hash chain: `hash = SHA-256(prev_hash || canoni
 
 ### 6.1 CLI (draft)
 ```
-agent-firewall run --config gateway.yaml           # start the gateway
-agent-firewall wrap -- npx -y <server-package>    # quick local stdio wrapper
-agent-firewall tools list|diff|approve|reject
-agent-firewall policy test --input call.json      # dry-run a decision
-agent-firewall audit verify|tail|export --format ocsf
-agent-firewall lab run <scenario>                 # run attack lab scenarios
+bulwark run --config gateway.yaml           # start the gateway
+bulwark wrap -- npx -y <server-package>    # quick local stdio wrapper
+bulwark tools list|diff|approve|reject
+bulwark policy test --input call.json      # dry-run a decision
+bulwark audit verify|tail|export --format ocsf
+bulwark lab run <scenario>                 # run attack lab scenarios
 ```
 
 ### 6.2 Configuration schema (draft)
@@ -472,7 +473,7 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 ### 14.1 Decision log
 | # | Decision | Rationale | ADR | Date |
 |---|---|---|---|---|
-| 1 | Lab-first roadmap: attack lab and baseline benchmark are M1, before any gateway code | Plays to offensive strengths, publishes a result early, and gives every milestone an objective before/after measure | — | 2026-11-26 |
+| 1 | Lab-first roadmap: attack lab and baseline benchmark are M1, before any gateway code | Plays to offensive strengths, publishes a result early, and gives every milestone an objective before/after measure | [ADR-0001](docs/adr/0001-lab-first-roadmap.md) | 2026-11-26 |
 
 ### 14.2 Open questions (carried from IDEA.md)
 - Q0 Lab implementation language. Can it differ from the gateway's? (The lab servers are small; using the official MCP SDK in TypeScript or Python is fine either way.)

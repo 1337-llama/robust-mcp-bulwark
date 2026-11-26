@@ -1,0 +1,39 @@
+name: Lab scenario proposal
+description: Propose a new attack scenario for the attack lab (publicly known techniques only)
+labels: ["lab"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lab scenarios must be **harmless**: canary secrets, local sink, no external network calls.
+        If you've found a vulnerability in a specific product, report it to that vendor instead (see SECURITY.md).
+  - type: input
+    id: name
+    attributes:
+      label: Scenario name
+      description: For example "Tool shadowing via description cross-reference"
+    validations:
+      required: true
+  - type: textarea
+    id: technique
+    attributes:
+      label: Attack technique
+      description: How the attack works, and its mapping (OWASP Agentic/LLM Top 10 ID, MITRE ATLAS technique) if known.
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success condition
+      description: How the benchmark decides the attack succeeded (for example "canary value reaches the local sink").
+    validations:
+      required: true
+  - type: textarea
+    id: control
+    attributes:
+      label: Expected control
+      description: Which MCP Bulwark capability should stop or contain it?
+  - type: textarea
+    id: references
+    attributes:
+      label: Public references

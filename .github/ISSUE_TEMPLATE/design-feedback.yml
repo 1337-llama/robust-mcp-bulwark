@@ -1,0 +1,23 @@
+name: Design feedback
+description: Comment on a section of the design document
+labels: ["design"]
+body:
+  - type: input
+    id: section
+    attributes:
+      label: Design section
+      description: Section or item ID, for example "§7.4 T-03" or "FR-008"
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: What's wrong, missing, or could be better? Suggest an alternative if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Specs, papers, tools, or prior art that support your point.
