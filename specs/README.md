@@ -2,7 +2,7 @@
 
 Each spec is one vertical slice of v0.1, traced to requirements in [DESIGN.md](../DESIGN.md) §2 and listed in the §15 backlog. Each spec folder holds `spec.md` (what and why: EARS acceptance criteria), `plan.md` (how), and `tasks.md` (ordered, test-first steps).
 
-**Review process:** a spec's three files are reviewed together in one PR by an independent reviewer session, and merged when no blockers remain. Merging sets the spec to `Ready`. Implementation starts only from a `Ready` spec, and the spec becomes `Done` when its last task is merged.
+**Review process:** a spec's three files are reviewed together in one PR by an independent reviewer session. Claude merges the PR, under the maintainer's standing instruction, once no blockers remain ([WORKFLOW.md](../docs/WORKFLOW.md), Stage 2). Merging sets the spec to `Ready`. Implementation starts only from a `Ready` spec, and the spec becomes `Done` when its last task is merged.
 
 | Spec | Title | Milestone | Status |
 |---|---|---|---|
