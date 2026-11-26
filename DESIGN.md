@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.10 |
+| Version | 0.11 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -22,6 +22,7 @@
 | 0.8 | 2026-11-26 | Review fixes S1–S10: verify-before-call re-scoped (stale-only); policies bound to server identity and declared argument roles; `ask` = deny in v0.1 (no terminal prompt); per-control attribution in the suite; FR-032 → FR-008; NFR-003/004/010/014 made automatable and non-flaky; OWASP/ATLAS mappings corrected; CI budget; specs merged 10 → 8 with a cut line (§12.1); lossless re-serialization; T-19, AR-10, AR-11; decisions 18–24 |
 | 0.9 | 2026-11-26 | §1.3 `VERIFY:` items (a)–(e) resolved against the official 2026-07-28 changelog, schema, and stdio, MRTR, and `server/discover` pages (spec repository); SEP citation corrected; stdio rule "server MUST NOT write requests" and MRTR method scope added to FR-035, FR-036, and T-17; tool-change notification wording made exact |
 | 0.10 | 2026-11-26 | Design 03: §5 detailed design, §6 interfaces (CLI, config, pin store, audit record, error responses, manifest), §9 operations, §10 CI workflows, §11 packaging and release; every remaining `VERIFY:` resolved against primary sources; repo made public (C-4, decisions 21 and 30); decisions 25–34; design review 1 |
+| 0.11 | 2026-11-26 | Independent review of design 03: B1 fixed by the policy model "allow by pin, restrict with deny" (decision 35); MRTR checks on all three methods (S1, decision 36); JSON Pointer locations everywhere (S2); secret and MRTR blocks enforced by the gateway, independent of policy (S3); replay client wording (S4); re-check rate limit (S5, decision 37); requirement-to-test check (S6); nits N1–N5 |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -137,11 +138,11 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | FR-027 | The CLI shall support: `wrap`, `tools list/diff/approve/reject`, `policy test`, and `audit verify/tail`. | MVP | G1–G4 |
 | FR-028 | Gateway shall parse every message strictly: reject duplicate object keys, invalid UTF-8, `\u` escapes that encode lone UTF-16 surrogates, and messages over the size or depth limits. It shall forward the **re-serialized form it inspected**, never the original bytes. Re-serialization shall be **lossless**: numbers are kept exactly as written (never converted to floating point, so integers above 2^53 survive), and unknown fields are kept. A property test and a fuzz target check that parse → serialize → parse yields an identical message. | MVP | G2 (T-01) |
 | FR-029 | Every CLI output that includes untrusted text (tool definitions, diffs, prompts, audit fields) shall neutralize control characters, ANSI escapes, and bidi controls. | MVP | G2 (T-11) |
-| FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's last-seen definition matches its approved pin. It shall re-fetch `tools/list` itself when its view is stale: after a tool-change notification, when the server's `ttlMs` hint has expired, or when the view is older than `pin_recheck_max_age` (default 300 s). Setting `pin_recheck_max_age: 0` re-checks before every call (opt-in). | MVP | G2 (M-2) |
+| FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's last-seen definition matches its approved pin. It shall re-fetch `tools/list` itself when its view is stale: after a tool-change notification, when the server's `ttlMs` hint has expired, or when the view is older than `pin_recheck_max_age` (default 300 s). Setting `pin_recheck_max_age: 0` and `pin_recheck_min_age: 0` re-checks before every call (opt-in). Otherwise re-checks are rate-limited by `pin_recheck_min_age` (default 30 s), so a server cannot force a re-check before every call. | MVP | G2 (M-2) |
 | FR-031 | Gateway shall track outstanding request IDs (client-to-server always; server-to-client too under 2025-11-25), use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
 | FR-033 | Gateway shall fingerprint, pin, and analyze **server metadata** (`instructions`, server info, capabilities) from `server/discover` (2026-07-28) or `initialize` (2025-11-25). In `enforce` mode, unapproved or changed metadata, or metadata with high-severity findings, has `instructions` and other free-text descriptive fields removed before forwarding until approved (name and version are kept). | MVP | G2 (M-8, B2) |
 | FR-034 | Gateway shall run the FR-022 analyzers on prompts (`prompts/list` metadata and `prompts/get` messages), resources (`resources/list` and template metadata), and MRTR input requests, and audit the findings. v0.1 does not block or pin these (AR-8). | MVP | G2 (M-8, M-9) |
-| FR-035 | Gateway shall treat an MRTR retry (a `tools/call` carrying `inputResponses`) as a new `tools/call`: pin check, secret scan of `inputResponses`, and policy evaluation with the input responses in the decision input. The retry has a new JSON-RPC `id` (MRTR rule), so Bulwark matches it to the earlier `input_required` result by server, method, tool name, and `requestState`; `requestState` is forwarded byte-for-byte and never inspected or modified. `inputResponses` keys that the server never requested are recorded as an `mrtr.unsolicited_response` finding, which the example policies deny. | MVP | G3 (M-9, T-16) |
+| FR-035 | Gateway shall check every MRTR retry, meaning a `tools/call`, `prompts/get`, or `resources/read` carrying `inputResponses` or `requestState`. The retry has a new JSON-RPC `id` (MRTR rule), so Bulwark matches it to the earlier `input_required` result by server, method, target, and `requestState` (§5.7). `requestState` is forwarded byte-for-byte and never inspected or modified. Before policy, and independent of it, the gateway checks the retry: secrets in `inputResponses` (`secrets:<rule>`), keys the server never requested (`mrtr:unsolicited_response`), and retries with no match (`mrtr:unmatched_retry`). In `enforce` mode each of these blocks the retry. A `tools/call` retry then goes through the full `tools/call` pipeline (pin check, policy with the input responses in the decision input). | MVP | G3 (M-9, T-16) |
 | FR-036 | Gateway shall determine each message's protocol revision (per request under 2026-07-28; from the negotiated version under 2025-11-25), apply the same controls under both supported revisions, and record the revision in the audit log. Messages in an unsupported or unrecognizable revision are rejected in `enforce` mode and forwarded with an audit record in `learn` and `warn` modes. Under 2026-07-28, a JSON-RPC **request** from the server on stdout, or an `input_required` result on any method other than `tools/call`, `prompts/get`, or `resources/read`, is a protocol violation: blocked in `enforce`, audited in all modes. | MVP | G2 (T-17) |
 
 **Later (v0.2+)**
@@ -182,7 +183,7 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | C-3 | Constraint | No manual testing or local model runs (NFR-002). |
 | C-4 | Constraint | The repo is **public** (since 2026-11-26). Standard GitHub-hosted runners are free for public repositories, Linux and macOS alike, so CI has no minute budget. The remaining limit is wall time (NFR-009). *(Before v0.10 the repo was private, with a 2,000-minute monthly allowance; decision 21 is amended accordingly.)* |
 | A-1 | Assumption | Protocol-level replay is a faithful test of Bulwark's controls, because Bulwark acts only on protocol messages. It does **not** show how often a model would follow the malicious instructions. The docs cite published research for that (R3 in IDEA.md). |
-| A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the lab servers and replay client under both supported revisions. The SDK is used only in lab servers; the replay client sends raw JSON-RPC (§5.9), and the gateway parses JSON-RPC itself (ADR-0003). |
+| A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the **lab servers**. The replay client sends raw scripted JSON-RPC (§5.9, decision 29), and the gateway parses JSON-RPC itself (ADR-0003). |
 
 ---
 
@@ -268,7 +269,7 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 |---|---|---|
 | `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-08 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-008 |
 | `lab/scenarios/*.yaml` | Scenario manifests: technique, mappings, replay script, expected observables per condition | FR-001, FR-004 |
-| `lab/replay` | Replay client: an MCP client (Go SDK) that executes a replay script under a chosen protocol revision and records the transcript | FR-003 |
+| `lab/replay` | Replay client: a scripted raw JSON-RPC driver (not the SDK, decision 29) that executes a replay script under a chosen protocol revision and records the transcript | FR-003 |
 | `lab/suite` | Go tests: for each scenario × condition × revision, start the stack, replay, read the observation log, assert. All scenarios run under 2026-07-28; a compatibility subset (L-01, L-02, L-07) also runs under 2025-11-25 | FR-004, FR-036, NFR-008 |
 | `tools/ci-summary` | Renders suite results (JSON) as a Markdown table for the GitHub Actions job summary and the README | FR-005 |
 
@@ -431,7 +432,8 @@ type Interceptor interface {
 | Direction | Method / message | Interceptors, in order | Requirements |
 |---|---|---|---|
 | client → server | any request | revision check → request-ID tracking → limits | FR-031, FR-036, NFR-013 |
-| client → server | `tools/call` | MRTR correlation → pin check (verify-before-call when stale) → secret scan of `arguments` and `inputResponses` → policy | FR-021, FR-025, FR-030, FR-035, FR-023, FR-024 |
+| client → server | `tools/call` | MRTR checks (§5.7) → pin check (verify-before-call when stale) → secret scan of `arguments` and `inputResponses` (deny per config) → policy | FR-021, FR-025, FR-030, FR-035, FR-023, FR-024 |
+| client → server | `prompts/get`, `resources/read` retries | MRTR checks (§5.7) → secret scan of `inputResponses` | FR-025, FR-035 |
 | server → client | `server/discover` / `initialize` result | metadata fingerprint and pin → analyzers → strip in `enforce` | FR-033 |
 | server → client | `tools/list` result | fingerprint and pin → analyzers → mode filter (hide) | FR-021, FR-022 |
 | server → client | `tools/call` result | `input_required` handling (analyzers on `inputRequests`, record correlation) **or** secret scan of `content`, `structuredContent` | FR-025, FR-034, FR-035 |
@@ -470,7 +472,7 @@ Both revisions are mapped onto one internal model, so every interceptor is writt
 
 ### 5.3 Server identity, fingerprints, and the pin store (`internal/registry`)
 **Server identity** comes only from Bulwark's side, never from the server (its `serverInfo` is self-reported and untrusted):
-- `server_id`: the name the operator gives with `--server-id` (required in `enforce` mode).
+- `server_id`: the name the operator gives with `--server-id`. It is required in `enforce` mode. In `learn` and `warn` modes the default is `auto-<first 12 hex digits of command_digest>`, printed at startup, so pins and audit files are still keyed consistently.
 - `command_digest`: SHA-256 over the canonical form of `{argv, resolved executable path, SHA-256 of the executable file}`.
 
 This identifies *what was asked to launch*, not every file the server loads. A command like `npx -y some-package` fetches whatever version is current, so `bulwark wrap` warns (`identity.unpinned_package`) when an `npx`/`uvx` argument has no exact version, or a `docker run` image has no `@sha256:` digest. A changed `command_digest` is treated as a changed server: in `enforce` mode all of its tools and metadata are hidden or stripped until re-approved with `bulwark tools approve`.
@@ -486,7 +488,7 @@ This identifies *what was asked to launch*, not every file the server loads. A c
 | `warn` | Forwarded; `pin.unapproved` / `pin.changed` finding | Forwarded; finding | Forwarded; finding |
 | `enforce` | **Hidden** from `tools/list`; calls get "Unknown tool" | `instructions` and free-text fields **stripped** | Tool **hidden** / metadata **stripped** until approved |
 
-**Re-check schedule (FR-030):** the tool view is stale after a `ToolViewStale` event, or when its age exceeds `min(ttlMs, pin_recheck_max_age)`. A `ttlMs` of 0 is treated as "no hint", so a server cannot force a re-check before every call. The gateway's own `tools/list` follows every `nextCursor` page.
+**Re-check schedule (FR-030):** the tool view becomes stale after a `ToolViewStale` event, or when its age exceeds `min(ttlMs, pin_recheck_max_age)`. A `ttlMs` of 0 is treated as no hint. In every case, the gateway re-checks **at most once per `pin_recheck_min_age`** (default 30 s), so neither a tiny `ttlMs` nor a stream of change notifications can force a re-check before every call. The gateway's own `tools/list` follows every `nextCursor` page.
 
 **Diffs** (`bulwark tools diff`) show a path-based structural diff of the JSON plus a line diff for long strings. All untrusted text goes through `termsafe` (FR-029).
 
@@ -517,17 +519,27 @@ Each corpus is split once, by a fixed seed, into a **tuning** half (used while w
 
 ### 5.5 Secret detection and redaction (`internal/redact`)
 - **Rules (v0.1, patterns only):** AWS access key IDs, GitHub tokens (`ghp_`, `gho_`, `ghs_`, `github_pat_`), Slack tokens (`xox?-`), Google API keys, Stripe live keys, PEM private-key blocks, and JWTs (medium). All are RE2. Each rule has positive and negative unit tests. The suite's plain canary must match none of them (§10.3).
-- **Where:** `tools/call` arguments and `inputResponses` (client → server), and results (`content` text, `structuredContent` strings, error `message`/`data`, resource text contents) (server → client). Binary and base64 blobs are not scanned in v0.1 (AR-9).
+- **Where:** `tools/call` arguments, and `inputResponses` on retries of `tools/call`, `prompts/get`, and `resources/read` (client → server); results (`content` text, `structuredContent` strings, error `message`/`data`, resource text contents) (server → client). Binary and base64 blobs are not scanned in v0.1 (AR-9).
 - **Actions (configurable, §6.3):**
-  - Requests: default **`deny`**. The finding goes to policy, and the baseline policy denies it. Silently changing an argument would alter what the tool does.
+  - Requests: default **`deny`**, enforced by this interceptor itself, before and independent of policy (control `secrets:<rule>`). Silently changing an argument would alter what the tool does. `redact` and `audit` are the other options.
   - Results: default **`redact`**, replacing the match with a visible marker `[REDACTED:<rule>]`. The model can see that something was removed; it is never silent.
 
 ### 5.6 Policy engine (`internal/policy`)
-The decision input and example policies are unchanged from v0.9 (shown below). Additions in this version:
-- **Baseline policy (embedded, on by default):** `allow` for approved tools (`baseline-approved-tool`); `deny` for secret findings in request arguments and `inputResponses` (`no-secrets-out`), and for `mrtr.unsolicited_response` and `mrtr.unmatched_retry` (`mrtr-unsolicited`, `mrtr-unmatched`). Control IDs in audit records and suite results are `<kind>:<id>`: `policy:…`, `secrets:<rule>`, `analyzer:<analyzer>/<rule>`, `pin:<event>`. Without it, the default-deny combiner would block every call in `enforce` until the operator writes Rego, making the first run useless. Operators add role-based constraints in their own policy directories. Setting `policy.baseline: false` gives pure default-deny.
-- **Capabilities:** OPA's default capabilities minus **every built-in OPA marks `nondeterministic`**. The list is derived mechanically from the pinned OPA version's capabilities file, not maintained by hand. At OPA `main` on 2026-11-26 that is 11 built-ins: `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `io.jwt.decode_verify`, `io.jwt.encode_sign`, `io.jwt.encode_sign_raw`, `json.match_schema`, `json.verify_schema`, `rand.intn`, `time.now_ns`, `uuid.rfc4122`. This removes network access (T-19), environment access, and nondeterminism (NFR-008) in one rule. A policy that uses one fails to load.
-- **Evaluation:** queries are prepared at startup. Each evaluation has a 50 ms timeout, and a timeout or error means deny (NFR-005). There is no hot reload in v0.1: policies change when the client restarts the server process.
-- **Schema:** the decision input is published as a JSON Schema (`schemas/policy-input.v1.json`) and validated in tests.
+**Policy model: allow by pin, restrict with `deny` (decision 35).** Three layers, in this order:
+
+| Layer | What it does | Where it lives | Control ID when it blocks |
+|---|---|---|---|
+| 1. Gateway checks | Secrets in request arguments and `inputResponses` (`secrets.requests: deny`), and MRTR `unsolicited_response`/`unmatched_retry` | Interceptors (§5.5, §5.7); they run **before** policy and do not depend on any policy file | `secrets:<rule>`, `mrtr:<check>` |
+| 2. Operator `deny` rules | Restrictions: path prefixes, host allowlists, recipient domains, anything else | The operator's Rego files | `policy:<rule id>` |
+| 3. Allow + default-deny | `allow` grants. The embedded **baseline allow** (`baseline-approved-tool`, on by default) grants every **approved** tool. With no `allow`, the call is denied | Baseline bundle + operator Rego | `policy:default-deny` |
+
+The combiner is unchanged: any `deny` → deny; else any `ask` → ask (in v0.1, deny with an `approval_required` record); else any `allow` → allow; else deny. Because operators **restrict with `deny` rules**, a restriction always wins over the baseline allow, and the rule that blocked is named in the audit record and the suite results (FR-004). With `policy.baseline_allow: false`, nothing is allowed unless an operator `allow` rule grants it, and blocks are recorded as `policy:default-deny`.
+
+**Capabilities:** OPA's default capabilities minus **every built-in OPA marks `nondeterministic`**. The list is derived mechanically from the pinned OPA version's capabilities file, not maintained by hand. At OPA `main` on 2026-11-26 that is 11 built-ins: `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `io.jwt.decode_verify`, `io.jwt.encode_sign`, `io.jwt.encode_sign_raw`, `json.match_schema`, `json.verify_schema`, `rand.intn`, `time.now_ns`, `uuid.rfc4122`. This removes network access (T-19), environment access, and nondeterminism (NFR-008) in one rule. A policy that uses one fails to load.
+
+**Evaluation:** queries are prepared at startup. Each evaluation has a 50 ms timeout, and a timeout or error means deny (NFR-005). There is no hot reload in v0.1: policies change when the client restarts the server process.
+
+**Schema:** the decision input is published as a JSON Schema (`schemas/policy-input.v1.json`) and validated in tests. Every `location` in Bulwark, whether in findings, audit records, or policy input, is a **JSON Pointer** (RFC 6901) into the message's `params` or `result`.
 
 Decision input (v0.1):
 
@@ -538,44 +550,37 @@ Decision input (v0.1):
   "arguments": {"url": "https://api.example.com/v1/upload", "body": "…"},
   "request": {"revision": "2026-07-28", "is_retry": false, "input_responses": null},
   "derived": {"egress_url": {"scheme": "https", "host": "api.example.com"}, "fs_path": null, "args_bytes": 812},
-  "findings": [{"analyzer": "secrets", "severity": "high", "location": "arguments.body"}],
+  "findings": [{"analyzer": "text.imperative", "severity": "medium", "location": "/arguments/body"}],
   "mode": "enforce"
 }
 ```
 
-`server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from configuration and is pinned with the tool. A tool with no declared roles gets no derived attributes, so a rule that needs one doesn't match, and default-deny applies.
+`server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from configuration and is pinned with the tool.
 
-Example policy. The gateway combines the sets: any `deny` → deny; else any `ask` → ask (in v0.1, deny with an `approval_required` record); else any `allow` → allow; else deny.
+Example operator policy. Restrictions are `deny` rules. If a declared role's derived value is missing (`null`, for example because no role was declared or the URL didn't parse), the `not` expressions below are true, so the rule **denies**, failing closed.
 
 ```rego
 package bulwark.authz
 
 # Rego v1 syntax (the default in OPA 1.x, so no `import rego.v1` is needed).
 
-# Reads only inside the workspace, and only from the server configured as "fs".
+# The "fs" server may only read inside the workspace.
 # fs_path is the cleaned path the gateway derived from the argument declared as fs_path.
-allow contains "fs-read-workspace" if {
+deny contains "fs-read-workspace" if {
 	input.server.id == "fs"
-	input.tool.pin_status == "approved"
 	input.tool.name == "read_file"
-	startswith(input.derived.fs_path, "/workspace/")
+	not startswith(input.derived.fs_path, "/workspace/")
 }
 
-# Outbound HTTP only from the "web" server, only to approved hosts.
-allow contains "http-allowlist" if {
+# The "web" server may only POST to approved hosts.
+deny contains "http-allowlist" if {
 	input.server.id == "web"
-	input.tool.pin_status == "approved"
 	input.tool.name == "http_post"
-	input.derived.egress_url.host in {"api.example.com"}
-}
-
-# Never send anything that looks like a secret.
-deny contains "no-secrets-out" if {
-	some f in input.findings
-	f.analyzer == "secrets"
-	startswith(f.location, "arguments")
+	not input.derived.egress_url.host in {"api.example.com"}
 }
 ```
+
+Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **with the baseline allow enabled**; the right rule ID is reported; a missing derived value denies; and a policy using a removed built-in fails to load.
 
 **Derived attributes** are computed only for declared roles:
 | Role | Derived value | Notes |
@@ -585,15 +590,25 @@ deny contains "no-secrets-out" if {
 | `recipient` | Lowercased address and domain | For email-like tools |
 
 ### 5.7 Multi Round-Trip Requests (FR-035)
-- When a `tools/call` returns `input_required`, Bulwark records `{server_id, tool name, requestState (or empty), inputRequests keys, time}` in a bounded table (64 entries, 10-minute TTL). It runs the analyzers on the request text (elicitation messages, sampling prompts) and forwards the result unchanged.
-- A later `tools/call` that carries `inputResponses` or `requestState` is a **retry**. It is matched on server, tool, and the exact `requestState`. If matched, `request.is_retry = true`. Keys in `inputResponses` that were never requested produce `mrtr.unsolicited_response`; a retry with no match produces `mrtr.unmatched_retry`. The baseline policy denies both. `requestState` is passed through byte-for-byte and never parsed.
-- The retry then goes through the full `tools/call` chain (§5.1). This is the control that scenario L-08 attributes.
+MRTR applies to all three methods that may return `input_required` under 2026-07-28: `tools/call`, `prompts/get`, and `resources/read`. Bulwark handles all three the same way.
+
+- **Recording:** when a result has `resultType: "input_required"`, Bulwark records `{server_id, method, target (tool name, prompt name, or resource URI), requestState or empty, inputRequests keys, time}` in a bounded table (64 entries, 10-minute TTL). It runs the analyzers on the request text (elicitation messages, sampling prompts) and forwards the result unchanged.
+- **Retry detection:** a later request with the same method that carries `inputResponses` or `requestState` is a **retry**.
+- **Matching:** the retry is matched on server, method, target, and the exact `requestState`. When the original result had **no** `requestState`, the match is the most recent entry for that server, method, and target whose requested keys include every key in `inputResponses`. If two such entries exist with different key sets, the retry is ambiguous and treated as unmatched.
+- **Checks (MRTR interceptor, before and independent of policy):**
+  - keys in `inputResponses` that were never requested → `mrtr:unsolicited_response`
+  - a retry with no match → `mrtr:unmatched_retry`
+  - secrets in `inputResponses` → `secrets:<rule>` (§5.5)
+
+  In `enforce` mode each of these blocks the retry. `requestState` is passed through byte-for-byte and never parsed.
+- **`tools/call` retries** then go through the rest of the `tools/call` chain (pin check, policy), with `request.is_retry = true`. **`prompts/get` and `resources/read` retries** get the MRTR checks above. Policy evaluation for those methods is v0.2 (AR-8).
+- Scenario L-08 attributes the `secrets:<rule>` control on a `tools/call` retry. A unit and integration test covers the same checks on `resources/read`.
 
 ### 5.8 Audit log (`internal/audit`)
 - **Files:** `<state_dir>/audit/<server_id>/<UTC start time>-<pid>.jsonl`, one hash chain per file (one per process).
 - **Chain:** each record's `hash` = SHA-256(`prev_hash` ‖ canonical record without `hash`). The first record (`event: "start"`) uses a fixed genesis value and records the Bulwark version, config digest, policy bundle digest, pin store digest, mode, and `command_digest`.
 - **Durability:** each record is written and flushed as one line. `fsync` runs every second and on exit. **If the audit log can't be written in `enforce` mode, every call is denied**, so nothing goes unrecorded.
-- **Privacy defaults:** arguments are stored as a digest plus their size; raw argument values are not logged. Findings carry only redacted, truncated excerpts (T-10).
+- **Privacy defaults:** arguments are stored as an HMAC-SHA-256 value (`args_mac`) under a random per-install key (`<state_dir>/audit.key`, `0600`) plus their size; raw argument values are not logged. A plain SHA-256 digest of a short path or ID could be reversed by guessing; the keyed form can't be without the key, which stays out of exported logs. Equal arguments still produce equal values, so investigators can correlate calls. Findings carry only redacted, truncated excerpts (T-10).
 - **`audit verify`** recomputes every chain and reports the first broken record. It also states the limit in AR-6: a truncated tail or a wholly rewritten file cannot be detected without an external anchor (v0.2).
 
 ### 5.9 Attack suite internals
@@ -633,7 +648,7 @@ bulwark version
 | 1 | Error (bad configuration, unreadable files) |
 | 2 | Usage error |
 | 3 | Check failed (`audit verify` found a broken chain; `policy test` failed) |
-| upstream's code | `wrap`: the upstream's exit code; **70** if Bulwark itself failed |
+| upstream's code | `wrap`: the upstream's exit code; **70** if Bulwark itself failed. Because an upstream may also exit with 70, a Bulwark failure is also reported as a `bulwark:`-prefixed stderr line and a `stop` audit record with `reason: internal_error` |
 
 Defaults: `--mode warn` (safe to try; nothing is blocked); `--state-dir` = `$XDG_STATE_HOME/bulwark` (`~/.local/state/bulwark`); config from `--config`, then `$BULWARK_CONFIG`, then `$XDG_CONFIG_HOME/bulwark/config.yaml`.
 
@@ -659,6 +674,7 @@ servers:                       # keyed by --server-id
   fs:
     mode: enforce
     pin_recheck_max_age: 300s
+    pin_recheck_min_age: 30s
     arg_roles:                 # pinned with each tool; changes are audited
       read_file:  { path: fs_path }
       write_file: { path: fs_path }
@@ -667,11 +683,11 @@ servers:                       # keyed by --server-id
     arg_roles:
       http_post: { url: egress_url }
 policy:
-  baseline: true
+  baseline_allow: true         # allow approved tools; restrictions are deny rules (§5.6)
   dirs: ["~/.config/bulwark/policies"]
   eval_timeout: 50ms
 secrets:
-  requests: deny               # deny | redact | audit
+  requests: deny               # deny | redact | audit (enforced by the gateway, not by policy)
   results: redact              # redact | audit
 limits:
   max_message_bytes: 4194304
@@ -715,10 +731,10 @@ limits:
   "method": "tools/call",
   "tool": "http_post",
   "jsonrpc_id": 9,
-  "args_digest": "sha256:…",
+  "args_mac": "hmac-sha256:…",
   "args_bytes": 812,
   "decision": "deny",
-  "controls": ["secrets:aws-access-key", "policy:no-secrets-out"],
+  "controls": ["secrets:aws-access-key"],
   "findings": [{"analyzer": "secrets", "rule": "aws-access-key", "severity": "high", "location": "/arguments/body"}],
   "latency_us": {"gateway": 410, "upstream": null},
   "prev_hash": "sha256:…",
@@ -758,12 +774,12 @@ runs:                               # one run per control (FR-004)
       none:    {canary_exfiltrated: true}
       warn:    {canary_exfiltrated: true, controls_fired: [policy:http-allowlist]}
       enforce: {canary_exfiltrated: false, controls_fired: [policy:http-allowlist]}
-  - control: secrets:aws-access-key     # finding; the baseline policy no-secrets-out denies the call
+  - control: secrets:aws-access-key     # blocked by the secrets interceptor, before policy
     script_override: {3: {arguments: {url: "https://api.example.com/upload", body: "{{canaries.secret}}"}}}
     expect:
       none:    {canary_exfiltrated: true}
       warn:    {canary_exfiltrated: true, controls_fired: [secrets:aws-access-key]}
-      enforce: {canary_exfiltrated: false, controls_fired: [secrets:aws-access-key, policy:no-secrets-out]}
+      enforce: {canary_exfiltrated: false, controls_fired: [secrets:aws-access-key]}
 ```
 
 ### 6.8 Suite results (`results.json`, rendered by `tools/ci-summary`)
@@ -818,7 +834,7 @@ flowchart LR
 | M-6 | Over-privileged tool use | ASI03 Identity and Privilege Abuse | LLM03:2026 Excessive Agency | — | Default-deny policy with argument constraints (FR-023, FR-024) | Policy tests |
 | M-7 | No record of agent actions | — (supports detection and response for every ASI risk; it mitigates none directly) | — | — | Hash-chained audit (FR-026) | Tamper tests |
 | M-8 | Poisoning through server metadata (`instructions`, server info) and other non-tool channels (prompts, resources) | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | AML.T0051.001 | Pin, analyze, and strip server metadata in `enforce` (FR-033); analyze and audit prompts and resources (FR-034) | L-07 |
-| M-9 | Solicitation and exfiltration through MRTR input requests (the server asks for data; the answer goes back to it) | ASI01 Agent Goal Hijack; ASI09 Human-Agent Trust Exploitation | LLM01; LLM02 | AML.T0051.001 | Retry evaluated as a full call: secret scan of `inputResponses` + policy (FR-035); input requests analyzed (FR-034) | L-08 |
+| M-9 | Solicitation and exfiltration through MRTR input requests (the server asks for data; the answer goes back to it) | ASI01 Agent Goal Hijack; ASI09 Human-Agent Trust Exploitation | LLM01; LLM02 | AML.T0051.001 | Retries on all three MRTR methods checked: secret scan of `inputResponses`, unsolicited and unmatched answers blocked; `tools/call` retries also policy-evaluated (FR-035); input requests analyzed (FR-034) | L-08 |
 
 > **Sources, checked 2026-11-26:** OWASP Agentic Top 10 IDs and titles from the OWASP GenAI Security Project's own corpus repository (manifest entry for the 2026 final document: ASI01 Agent Goal Hijack … ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agents). OWASP LLM Top 10 2026 IDs from the project's GitHub repository (LLM01:2026 Prompt Injection, LLM02:2026 Sensitive Information Disclosure, LLM03:2026 Excessive Agency). MITRE ATLAS IDs from the official ATLAS data (v5.6.0): AML.T0010 AI Supply Chain Compromise, AML.T0011.002 Poisoned AI Agent Tool, AML.T0051.001 Indirect, AML.T0086 Exfiltration via AI Agent Tool Invocation. Tool poisoning is mapped to both the indirect prompt-injection sub-technique, because tool metadata is content the model ingests, and the poisoned-agent-tool technique.
 
@@ -834,13 +850,13 @@ flowchart LR
 | T-07 | TB3 | Evasion | Payloads crafted to slip past analyzers (paraphrase, splitting across fields, base64) | Layered defense: pinning and policy don't depend on detection; adversarial corpus grows with each bypass | FR-006, FR-022 | Medium (AR-5) |
 | T-08 | TB4 | Tampering | Pins, policies, or config modified to approve a malicious tool | File permission checks at startup (warn if group- or world-writable); every pin change is audited; container wrapping keeps the upstream away from the files | FR-026 | **High without container** (AR-2) |
 | T-09 | TB4 | Repudiation | Audit records edited or deleted | SHA-256 hash chain; `audit verify`. Full chain rewrite or tail truncation is detectable only with an external anchor (v0.2 signed checkpoints) | FR-026, NFR-006 | Medium (AR-6) |
-| T-10 | TB4 | Info disclosure | Secrets written into the audit log | Redact before logging; store argument digests rather than raw values by default | FR-025, FR-026 | Low |
+| T-10 | TB4 | Info disclosure | Secrets written into the audit log | Redact before logging; store keyed argument MACs (HMAC-SHA-256, per-install key) rather than raw values or plain hashes by default | FR-025, FR-026 | Low |
 | T-11 | TB5 | Spoofing | **Terminal escape injection:** tool text containing ANSI escapes or bidi controls makes a diff or approval prompt show something other than the truth | All untrusted text printed by the CLI goes through `termsafe` (escapes rendered visibly) | FR-029 | Low |
 | T-12 | TB5 | Spoofing | Approval prompt hijack: prompts read from stdin, which carries MCP traffic; or, in a terminal-based agent, a prompt on the shared terminal corrupts the agent's interface and races it for keystrokes | v0.1 has **no interactive prompts**: `ask` = deny with an `approval_required` audit record; approval happens out of band through the CLI. (GUI clients launch servers with no terminal at all, so a terminal prompt could not work there anyway.) | FR-023 | Low |
 | T-13 | TB1 | Elevation | **Bypass:** the agent is configured to launch the server directly, not through Bulwark | Documented; `bulwark doctor` (later) checks known client configs | — | Medium (AR-3) |
 | T-14 | TB2 | Tampering | Supply-chain compromise of Bulwark or its dependencies | Pinned `go.sum`, `govulncheck` and dependency review in CI, SBOM, signed releases | NFR-012, NFR-015 | Low |
 | T-15 | TB2 | DoS | Policy engine error or panic leaves calls unchecked | Fail closed (NFR-005); panics in interceptors are recovered and become denials | NFR-005 | Low |
-| T-16 | TB3 | Info disclosure | **MRTR solicitation:** an `input_required` result asks the user or model for a secret or file contents, and the retried call carries the answer back to the server, bypassing checks that only look at ordinary arguments | Retry treated as a new `tools/call`: pin check, secret scan of `inputResponses`, policy with `input.request` (FR-035); input-request text analyzed and audited (FR-034) | FR-034, FR-035 | Medium (non-secret-shaped data still passes if policy allows the call) |
+| T-16 | TB3 | Info disclosure | **MRTR solicitation:** an `input_required` result asks the user or model for a secret or file contents, and the retried call carries the answer back to the server, bypassing checks that only look at ordinary arguments | Retries of `tools/call`, `prompts/get`, and `resources/read` are matched and checked before policy: secret scan of `inputResponses`, unsolicited and unmatched checks; `tools/call` retries also get the pin check and policy (FR-035); input-request text analyzed and audited (FR-034) | FR-034, FR-035 | Medium (non-secret-shaped data still passes if policy allows the call) |
 | T-17 | TB1/TB3 | Evasion | **Revision confusion:** a message in an older, unknown, or mixed revision is shaped so that Bulwark's interceptors miss it (for example server metadata arriving through `initialize` when Bulwark expects `server/discover`, or a change notification in the other revision's form) | Per-message revision detection; both supported revisions map onto one internal model so every control applies to both; unsupported revisions rejected in `enforce`; compatibility subset of the suite runs under 2025-11-25; under 2026-07-28, server-originated requests and `input_required` on non-MRTR methods are treated as violations | FR-036 | Low |
 | T-18 | TB3 | Evasion | **Pin evasion through unhashed fields:** a server changes or poisons a tool field that the fingerprint does not cover (`icons`, `_meta`, a field from a newer revision) | Whole-object fingerprint with an explicit, audited exclude list (empty by default); unknown fields are kept and hashed, never dropped | FR-021, FR-028 | Low |
 | T-19 | TB4 | Info disclosure | **Policy as an exfiltration path:** a policy file (malicious, or copied carelessly) uses OPA network or runtime built-ins such as `http.send` to send decision inputs, which include arguments, to a remote host, or reads the environment | Policies compiled with an OPA capabilities set that removes network and runtime built-ins; loading a policy that uses them fails (ADR-0004) | NFR-014 | Low |
@@ -906,7 +922,7 @@ v0.1 has **no metrics endpoint**, because it opens no listeners (NFR-014). The a
 |---|---|---|
 | Unit | Pure functions, table-driven | Parser edge cases, canonical form, fingerprints, each analyzer rule (positive and negative), secret rules, derived attributes, decision combiner |
 | Property and fuzz | Go native fuzzing | Parse → serialize → parse identity (FR-028); framing never splits or merges messages; the analyzers never panic. A 60 s fuzz run on every PR, 10 min nightly |
-| Policy | `opa test` through `bulwark policy test` | Baseline and example policies, plus "capability removed" tests (a policy using `http.send` fails to load) |
+| Policy | `opa test` through `bulwark policy test` | Each restriction blocks **with the baseline allow enabled** and reports its rule ID; a missing derived value denies; a policy using a removed built-in (for example `http.send`) fails to load |
 | Integration | Real processes over pipes | Bulwark between the official Go SDK client and lab servers; error-format test (§6.6); revision detection (§5.2) |
 | End-to-end (suite) | Replay client → Bulwark → lab servers | 8 scenarios × 3 conditions × controls × revisions (§10.3) |
 | Corpus | Analyzer detection and false-positive rates | MCPTox subset and benign reference-server tools (§5.4) |
@@ -921,7 +937,7 @@ v0.1 has **no metrics endpoint**, because it opens no listeners (NFR-014). The a
 | `suite.yml` | Every PR and push | Build both binaries; run the suite twice in a container with networking disabled, under a syscall trace (`strace -f -e trace=%network`); fail on any non-loopback `connect`; compare the two results; publish the results table to the job summary | FR-001…FR-008, NFR-003, NFR-007, NFR-008 |
 | `security.yml` | Every PR; weekly | `govulncheck`; GitHub dependency review (free for public repos); `gitleaks` CLI secret scan of the repo (MIT), in addition to GitHub secret scanning with push protection, enabled in repository settings | NFR-015 |
 | `macos.yml` | Every PR and push | `ci.yml` and `suite.yml` jobs on macOS, in parallel with Linux (no `strace`; network isolation is checked on Linux only) | NFR-010 |
-| `meta` job in `ci.yml` | Every PR | `actionlint` on all workflows; a check that every job uses a standard GitHub-hosted runner label (no paid larger runners) and no paid third-party service; a check that every MVP requirement ID appears in a test name or in the traceability table of the latest design review | NFR-001, NFR-002 |
+| `meta` job in `ci.yml` | Every PR | `actionlint` on all workflows; a check that every job uses a standard GitHub-hosted runner label (no paid larger runners) and no paid third-party service; a check that **every MVP requirement ID appears in a test**, either in the test name or in a `// Verifies: FR-xxx` comment tag on a test (documents don't count) | NFR-001, NFR-002 |
 | `nightly.yml` | Nightly | 10 min fuzz per target; corpus report | FR-006, FR-028 |
 | `release.yml` | Version tag | Build, SBOM, sign, attest, scripted quickstart from the release archive | FR-007, NFR-011, NFR-012 |
 
@@ -937,7 +953,7 @@ The attack scenarios are built **first** (M1, see §12). Each one starts as a te
 | L-01 Poisoned description | Hidden `<IMPORTANT>` instruction to read a canary file and pass it to another tool | `poison_delivered`, `canary_exfiltrated` | Analyzer finding → tool hidden (FR-022); path policy (FR-024) | Classifier (v0.3) |
 | L-02 Rug pull | Tool definition changes after the N-th call | `poison_delivered` after change | Pin mismatch → quarantine (FR-021) | — |
 | L-03 Shadowing | One tool's description tells the agent to BCC an attacker address whenever it uses the server's `send_email` tool | `poison_delivered`, `forbidden_call_executed` | Cross-reference analyzer (FR-022); recipient-domain policy (FR-024) | Cross-server shadowing with aggregation (v0.2) |
-| L-04 Indirect injection | A tool result contains instructions to send a canary to an external URL | `canary_exfiltrated` | Egress domain allowlist (FR-024); secret detection in arguments, denied by the baseline policy (FR-025) | Taint tracking (v0.2) |
+| L-04 Indirect injection | A tool result contains instructions to send a canary to an external URL | `canary_exfiltrated` | Egress domain allowlist (FR-024); secret detection in arguments, blocked by the secrets interceptor (FR-025) | Taint tracking (v0.2) |
 | L-05 Argument side channel | Schema adds a free-text `context` parameter that solicits secrets | `canary_exfiltrated` | Side-channel schema analyzer (FR-022); secret detection in arguments (FR-025) | — |
 | L-06 Unicode smuggling | Unicode Tag-block characters encode hidden instructions | `poison_delivered` | `unicode.hidden` analyzer (FR-022) | — |
 | L-07 Poisoned server instructions | Server `instructions` (from `server/discover`, or `initialize` under 2025-11-25) tell the agent to read a canary file and send it out; tool definitions are clean | `poison_delivered` | Metadata analyzer finding → instructions stripped (FR-033) | Prompt and resource pinning (v0.2) |
@@ -1013,7 +1029,8 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | `ask` in v0.1 | Deny with an `approval_required` audit record | `/dev/tty` prompt (unusable in GUI clients, conflicts with terminal agents) | §7.4 T-12, decision 19 |
 | Suite assertions | Observables + attributed control, one run per control | Observables only (a test can pass because a different control fired) | §10.3, decision 20 |
 | MRTR retries | New `tools/call` through the full pipeline | Treat as continuation of an already-approved call (answers bypass policy, T-16) | §4.4, decision 17 |
-| First-run policy | Embedded baseline policy (approved tools allowed, secrets and unsolicited MRTR answers denied) | Pure default-deny (blocks everything until Rego is written); allow-all until configured (no protection) | §5.6, decision 25 |
+| First-run policy | Embedded baseline allow for approved tools; secret and MRTR blocks are gateway checks that apply regardless of policy | Pure default-deny (blocks everything until Rego is written); allow-all until configured (no protection) | §5.6, decision 25 |
+| How operators restrict calls | `deny` rules (always win; named in results) | `allow` rules combined with a baseline allow (the baseline allow overrides them, review B1) | §5.6, decision 35 |
 | Server identity | Operator ID + command digest | Server-reported `serverInfo` (spoofable); hash of every loaded file (not visible to a stdio gateway) | §5.3, decision 26 |
 | Replay client | Raw scripted JSON-RPC | Official SDK client (can't send malformed or mixed-revision messages; would need a version pin) | §5.9, decision 29 |
 | Secrets in requests | Deny via policy | Redact silently (changes what the tool does); audit only (data leaves) | §5.5, decision 31 |
@@ -1047,16 +1064,20 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 22 | NFR-004 gated on an in-process benchmark; end-to-end latency reported only | Shared runners are too noisy for an end-to-end latency gate (NFR-008) | — | 2026-11-26 |
 | 23 | v0.1 is 8 specs; interactive `ask` and entropy detection cut; ordered cut line in §12.1 | About 6–8 months at one review per week | — | 2026-11-26 |
 | 24 | Lossless re-serialization: exact numbers, unknown fields kept, lone surrogates rejected; round-trip property and fuzz tests | Re-serializing through floats or dropping fields would corrupt IDs and break transparency (FR-028) | — | 2026-11-26 |
-| 25 | Embedded baseline policy, on by default: allow approved tools; deny secret-shaped arguments and unsolicited or unmatched MRTR responses | Pure default-deny would block every call until the operator writes Rego, so a first run would be useless (§5.6) | — | 2026-11-26 |
+| 25 | Embedded baseline **allow** for approved tools, on by default. *Amended in review of design 03:* the baseline contains only the allow; secret and MRTR blocks moved to gateway checks (decisions 31 and 36), and restrictions are deny rules (decision 35) | Pure default-deny would block every call until the operator writes Rego, so a first run would be useless (§5.6) | — | 2026-11-26 |
 | 26 | Server identity = operator `--server-id` + `command_digest`; the server's own `serverInfo` is never used for identity; warn on unpinned `npx`/`uvx` packages and undigested images; a changed digest needs re-approval | `serverInfo` is self-reported; the digest is the best identity a stdio gateway can establish (§5.3) | — | 2026-11-26 |
 | 27 | Fingerprints use JCS key order and string rules but keep exact number literals (a documented deviation from RFC 8785) | Strict JCS maps distinct large integers to the same double, which would let a server change a number unseen (§5.3) | — | 2026-11-26 |
 | 28 | Hidden tool → JSON-RPC `-32602` "Unknown tool"; policy deny → tool result with `isError: true`; unsupported revision → `-32022`; limits → `-32010` | Matches the MCP tools spec's split between protocol errors and tool execution errors; hiding does not leak existence; the model gets actionable feedback on denies (§6.6) | — | 2026-11-26 |
 | 29 | Replay client sends raw scripted JSON-RPC; the Go SDK is used only in lab servers | Exact control of revision and message bytes (needed for FR-028 and FR-036 tests); no SDK version pin needed for compatibility (§5.9) | [ADR-0003](docs/adr/0003-implementation-language.md) (amended) | 2026-11-26 |
 | 30 | First signed release (cosign keyless, SBOM, GitHub attestations) is v0.1 at M3; the repo is public as of 2026-11-26 | Attestations need a public repo on the Free plan; keyless signing publishes repo identity to a public log (§11) | — | 2026-11-26 |
-| 31 | Secrets: requests denied by default (via baseline policy), results redacted with a visible `[REDACTED:<rule>]` marker | Silently changing arguments alters tool behavior; the model should see that something was removed (§5.5) | — | 2026-11-26 |
+| 31 | Secrets: requests denied by default **by the secrets interceptor, independent of policy** (amended in review); results redacted with a visible `[REDACTED:<rule>]` marker | Silently changing arguments alters tool behavior; the model should see that something was removed; the block must not depend on which policy files are loaded (§5.5) | — | 2026-11-26 |
 | 32 | OPA capabilities: remove every built-in OPA marks nondeterministic, derived from the pinned OPA version's capabilities file | One mechanical rule removes network, environment, and nondeterminism, with no hand-kept list to go stale (§5.6) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-26 |
 | 33 | If the audit log can't be written in `enforce` mode, every call is denied | Nothing may proceed unrecorded (§5.8, §9) | — | 2026-11-26 |
 | 34 | No hot reload of config or policies in v0.1 | Restart is cheap (the client relaunches the server); avoids reload races (§9) | — | 2026-11-26 |
+| 35 | Policy model: allow by pin, restrict with `deny` rules; blocks with no allow are recorded as `policy:default-deny` | An `allow`-based restriction can't win against the baseline allow, and a default-deny block had no control ID for attribution (design 03 review, B1) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-26 |
+| 36 | MRTR checks (secrets, unsolicited, unmatched) apply to `tools/call`, `prompts/get`, and `resources/read` retries, enforced by the gateway before policy | All three methods can return `input_required` under 2026-07-28; checking only `tools/call` left M-9 open (review S1) | — | 2026-11-26 |
+| 37 | Pin re-checks are rate-limited by `pin_recheck_min_age` (default 30 s) | A tiny `ttlMs` or a stream of change notifications must not force a re-check per call (review S5) | — | 2026-11-26 |
+| 38 | Audit records store keyed HMAC-SHA-256 argument values, not plain hashes | Plain hashes of short arguments can be reversed by guessing (review N3) | — | 2026-11-26 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:

@@ -5,7 +5,7 @@
 | Document reviewed | [DESIGN.md](../../DESIGN.md) v0.10, with [IDEA.md](../../IDEA.md) and [ADR-0001…0004](../adr/) |
 | Date | 2026-11-26 |
 | Gate | Stage 1 exit ([WORKFLOW.md](../WORKFLOW.md#design-review-checklist)) |
-| Earlier reviews | Independent review of design 02 (comment on PR #2), with all blockers, should-fix items, and nits addressed in v0.7–v0.9 |
+| Independent reviews | Design 02 (PR #2), addressed in v0.7–v0.9. Design 03 (PR #3): 1 blocker, 6 should-fix, 5 nits, addressed in v0.11 (below) |
 | Outcome | **Pass.** The design is approved when the maintainer merges design 03 |
 
 ## Checklist
@@ -13,7 +13,7 @@
 | # | Item | Result | Evidence |
 |---|---|---|---|
 | 1 | Every FR/NFR is testable and numbered | **Pass** | 24 MVP FRs and 15 NFRs, each with a verification method (traceability table below) |
-| 2 | Every component in §4 has a detailed design in §5 | **Pass** | All 16 packages in §4.2 are named in §5 (checked by script; four were added to §5.1 and §5.9 during this review) |
+| 2 | Every component in §4 has a detailed design in §5 | **Pass** | All 17 entries in §4.2 (12 gateway packages, 5 suite components) are named in §5. Checked by script, which first missed `lab/scenarios/*.yaml` (a data directory); four names were added to §5.1 and §5.9 during this review |
 | 3 | The threat model covers every trust boundary | **Pass** | TB1–TB5 all appear in §7.4; attack-suite threats in §7.5 |
 | 4 | Every AI component has evaluation, failure modes, and a non-AI fallback | **Pass (not applicable to v0.1)** | v0.1 contains no AI model. The v0.3 classifier plan in §8 already lists evaluation, failure modes, and fallback |
 | 5 | Every NFR has a way to measure it in §10 | **Pass** | All 15 NFRs are named in §10. NFR-001 and NFR-002 were linked to the new `meta` CI job during this review |
@@ -44,7 +44,7 @@ Three roles, each giving its top three concerns. Each concern is either addresse
 
 **Staff security engineer**
 1. *Same-user tampering is the largest residual risk* (AR-1, AR-2). A local server can bypass Bulwark or edit its state. **Tracked:** the README's "Limitations" section must lead with the container guidance, and spec 008's demo should show the `docker run --network none` form.
-2. *The baseline policy allows any arguments to approved tools.* Users could believe they have argument control when they only have pinning plus secret detection. **Addressed:** §5.6 states this. **Tracked:** `bulwark wrap` prints a one-line notice at startup in `enforce` mode when only the baseline policy is loaded.
+2. *The baseline allow permits any arguments to approved tools* until the operator adds `deny` restrictions. Users could believe they have argument control when they only have pinning plus the gateway's secret and MRTR checks. **Addressed:** §5.6 states this. **Tracked:** `bulwark wrap` prints a one-line notice at startup in `enforce` mode when only the baseline policy is loaded.
 3. *Rule-based analyzers will be evaded* (AR-5). **Addressed:** held-out corpus metrics (§5.4), and pinning and policy work regardless of detection. **Tracked:** a "bypass reported → new corpus entry + rule" process in CONTRIBUTING.md once code exists.
 
 **SRE**
@@ -56,6 +56,23 @@ Three roles, each giving its top three concerns. Each concern is either addresse
 1. *v0.1 has no ML,* so the "AI" part of the portfolio rests on AI-security depth. **Accepted:** this is deliberate (ADR-0002), and the v0.3 classifier is planned to run on CPU in CI.
 2. *Detection metrics could overfit to MCPTox phrasing.* **Addressed in this review:** fixed tuning and held-out split, with held-out numbers reported (§5.4).
 3. *Corpus labels:* MCPTox items are labeled poisoned by construction, but the benign corpus needs care so that legitimate imperative descriptions ("Always pass absolute paths") aren't counted as attacks. **Tracked:** spec 004 defines the labeling guide for the benign corpus.
+
+## Independent review of design 03: findings and resolution (v0.11)
+
+| Finding | Resolution |
+|---|---|
+| **B1** Baseline allow overrode operator allow-rules; default-deny blocks had no control ID | Policy model changed to **allow by pin, restrict with `deny`**, with `policy:default-deny` as the default-deny control ID (§5.6, decision 35, ADR-0004 amended). Example policies rewritten as deny rules that fail closed on missing derived values. New policy tests check that restrictions block with the baseline allow enabled |
+| **S1** MRTR answers on `prompts/get` and `resources/read` weren't checked | MRTR checks cover all three methods (§5.7, FR-035, decision 36); M-9 and T-16 updated |
+| **S2** Mixed `location` formats | JSON Pointer everywhere (§5.6) |
+| **S3** Secret denial depended on the baseline policy | Secret and MRTR blocks are gateway checks, enforced before and independent of policy (§5.5, §5.7, decision 31 amended) |
+| **S4** Replay client described as using the SDK | §4.2 and A-2 corrected to raw JSON-RPC |
+| **S5** `ttlMs: 1` could force a re-check per call | `pin_recheck_min_age` (default 30 s) rate-limits all re-checks (§5.3, FR-030, decision 37) |
+| **S6** The traceability table satisfied the NFR-002 check by itself | The `meta` job now requires a test name or a `// Verifies:` tag (§10.2) |
+| **N1** Matching a retry without `requestState` | Most recent entry with a key-superset match; ambiguous → unmatched (§5.7) |
+| **N2** Exit code 70 collides with upstream codes | Bulwark failures also reported via a `bulwark:` stderr line and a `stop` audit record (§6.1) |
+| **N3** Unsalted argument digests | HMAC-SHA-256 with a per-install key (§5.8, T-10, decision 38) |
+| **N4** No `server_id` default in `learn`/`warn` | `auto-<12 hex of command_digest>` (§5.3) |
+| **N5** Package count | Corrected to 17 (checklist item 2) |
 
 ## Requirement traceability (generated from DESIGN.md §2 and §15)
 
