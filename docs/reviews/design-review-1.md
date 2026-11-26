@@ -38,6 +38,7 @@
 | Reference servers license (MIT, moving to Apache-2.0) | modelcontextprotocol/servers `LICENSE` |
 | CaMeL citation (arXiv 2503.18813) | arXiv listing |
 | Artifact attestations need a public repo on Free/Pro/Team | GitHub Docs, "Using artifact attestations" |
+| Example policy fails closed; nondeterministic built-ins rejected at load | Run under OPA 1.22.4: 8 unit tests pass (allowed and blocked hosts, unparseable URL, a later-approved tool without roles, a reviewed role-less tool, paths inside, outside, and missing); `opa check` with the restricted capabilities rejects `http.send`. The first run found that inline `not x in {…}` does not fail closed, so §5.6 now uses named helper rules |
 
 ## Reviewer perspectives
 Three roles, each giving its top three concerns. Each concern is either addressed in this version or tracked for the build.

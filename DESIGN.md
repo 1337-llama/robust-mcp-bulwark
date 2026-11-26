@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11 |
+| Version | 0.11.1 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -23,6 +23,7 @@
 | 0.9 | 2026-11-26 | §1.3 `VERIFY:` items (a)–(e) resolved against the official 2026-07-28 changelog, schema, and stdio, MRTR, and `server/discover` pages (spec repository); SEP citation corrected; stdio rule "server MUST NOT write requests" and MRTR method scope added to FR-035, FR-036, and T-17; tool-change notification wording made exact |
 | 0.10 | 2026-11-26 | Design 03: §5 detailed design, §6 interfaces (CLI, config, pin store, audit record, error responses, manifest), §9 operations, §10 CI workflows, §11 packaging and release; every remaining `VERIFY:` resolved against primary sources; repo made public (C-4, decisions 21 and 30); decisions 25–34; design review 1 |
 | 0.11 | 2026-11-26 | Independent review of design 03: B1 fixed by the policy model "allow by pin, restrict with deny" (decision 35); MRTR checks on all three methods (S1, decision 36); JSON Pointer locations everywhere (S2); secret and MRTR blocks enforced by the gateway, independent of policy (S3); replay client wording (S4); re-check rate limit (S5, decision 37); requirement-to-test check (S6); nits N1–N5 |
+| 0.11.1 | 2026-11-26 | Re-check nits: example restrictions keyed on server and declared argument role instead of tool name, plus a `roles-reviewed` rule so later-approved tools can't bypass them; `egress_url` row wording. Example policy run under OPA 1.22.4 with 8 unit tests; this found that inline `not x in {...}` did not fail closed, so checks now use named helper rules |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -557,26 +558,45 @@ Decision input (v0.1):
 
 `server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from configuration and is pinned with the tool.
 
-Example operator policy. Restrictions are `deny` rules. If a declared role's derived value is missing (`null`, for example because no role was declared or the URL didn't parse), the `not` expressions below are true, so the rule **denies**, failing closed.
+Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. If a declared role's derived value is missing (for example, the URL didn't parse), the rule **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
 
 ```rego
 package bulwark.authz
 
 # Rego v1 syntax (the default in OPA 1.x, so no `import rego.v1` is needed).
 
-# The "fs" server may only read inside the workspace.
-# fs_path is the cleaned path the gateway derived from the argument declared as fs_path.
-deny contains "fs-read-workspace" if {
+# Restrictions are keyed on the server and the declared argument role, not on
+# tool names (the server picks those). Each check is a named helper rule used as
+# `not helper`: if the derived value is missing (unparseable URL, relative path),
+# the helper is undefined, `not` is true, and the call is denied. (Writing
+# `not input.derived.egress_url.host in {...}` inline does NOT fail closed: with a
+# missing host the whole expression is undefined and the rule never fires.)
+
+# Arguments declared as fs_path on the "fs" server must stay inside the workspace.
+deny contains "fs-workspace-only" if {
 	input.server.id == "fs"
-	input.tool.name == "read_file"
-	not startswith(input.derived.fs_path, "/workspace/")
+	"fs_path" in {r | some r in input.tool.arg_roles}
+	not fs_path_ok
 }
 
-# The "web" server may only POST to approved hosts.
+fs_path_ok if startswith(input.derived.fs_path, "/workspace/")
+
+# Arguments declared as egress_url on the "web" server must target an approved host.
 deny contains "http-allowlist" if {
 	input.server.id == "web"
-	input.tool.name == "http_post"
-	not input.derived.egress_url.host in {"api.example.com"}
+	"egress_url" in {r | some r in input.tool.arg_roles}
+	not egress_host_ok
+}
+
+egress_host_ok if input.derived.egress_url.host in {"api.example.com"}
+
+# On these servers, a tool runs only after its arguments were reviewed: it declares
+# roles, or the operator listed it as having no sensitive arguments. A tool approved
+# later without either is denied, so it can't slip past the two rules above.
+deny contains "roles-reviewed" if {
+	input.server.id in {"fs", "web"}
+	count(input.tool.arg_roles) == 0
+	not input.tool.name in {"list_allowed_directories", "fetch_note"}
 }
 ```
 
@@ -586,7 +606,7 @@ Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **
 | Role | Derived value | Notes |
 |---|---|---|
 | `fs_path` | `path.Clean` of the absolute path; relative paths are rejected | Lexical only (AR-10) |
-| `egress_url` | Scheme, lowercased host (IDNA to ASCII), port | Unparseable URLs get `null`, so allow rules don't match |
+| `egress_url` | Scheme, lowercased host (IDNA to ASCII), port | Unparseable URLs get `null`, so deny rules on that role fire (fail closed) |
 | `recipient` | Lowercased address and domain | For email-like tools |
 
 ### 5.7 Multi Round-Trip Requests (FR-035)
