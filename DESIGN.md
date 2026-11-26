@@ -1115,7 +1115,7 @@ v0.1 is planned as **8 specs** (merged from 10 in v0.8 to fit the review budget,
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
 | 001 | Attack suite: lab scenarios L-01…L-08, manifests, observation log, lab guard, replay client (both revisions), runner, CI skeleton and results table | FR-001…FR-005, FR-008, NFR-001, NFR-002, NFR-003, NFR-008, NFR-009, NFR-010 | M1 |
-| 002 | stdio proxy: strict JSON-RPC, request IDs, revision handling; hash-chained audit log + `audit verify/tail`; terminal-safe output | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-006, NFR-007, NFR-013, NFR-014 | M1 |
+| 002 | stdio proxy: strict JSON-RPC, request IDs, revision handling; hash-chained audit log + `audit verify/tail`; terminal-safe output | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-005, NFR-006, NFR-007, NFR-013, NFR-014 | M1 |
 | 003 | Fingerprinting (tools + server metadata) + pin store + modes + verify-before-call | FR-021, FR-030, FR-033 | M2 |
 | 004 | Static analyzers (first 4) on all channels + detection corpora | FR-006, FR-022, FR-034 | M2 |
 | 005 | `tools` CLI (list/diff/approve/reject) | FR-027 (reuses FR-029 from spec 002) | M2 |
