@@ -2,7 +2,7 @@
 
 > A security gateway for AI agents. MCP Bulwark sits between an agent and its MCP tools. It pins and inspects tool definitions, enforces least-privilege policy on every tool call, redacts secrets, and keeps a tamper-evident audit trail. Every protection is proven by an attack test that runs in CI.
 
-**Status: 🚧 Design phase. No code yet.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The design documents are part of the project.
+**Status: 🚧 Design complete; building starts next. No code yet.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The [design document](DESIGN.md), [decision records](docs/adr/), and [design review](docs/reviews/design-review-1.md) are part of the project.
 
 ## The problem
 

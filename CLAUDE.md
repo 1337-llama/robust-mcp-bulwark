@@ -5,7 +5,7 @@ A security gateway for AI agents: an MCP proxy that pins and inspects tool defin
 **Purpose: a portfolio project for potential employers.** Optimize for shipped, tested, well-documented software that a reviewer can evaluate in 10 minutes, not for research.
 
 ## Current stage
-**Stage 1: Design.** `DESIGN.md` §1–§4 and §7 are drafted (Go per ADR-0003, OPA/Rego per ADR-0004, MCP revision 2026-07-28). Next: design 03, covering §5 detailed design, §6 interfaces, §9–§11, and the design review gate. **No implementation code yet.** The roadmap is attacks first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended), so the first specs are 001 (attack suite with replay client) and 002 (stdio proxy with audit log).
+**Stage 2: Specs.** `DESIGN.md` is approved on merge of design 03 (v0.10; design review 1 in `docs/reviews/`). Next: spec 001 (attack suite with raw JSON-RPC replay client) and spec 002 (stdio proxy with audit log), each as its own PR (`spec.md` → `plan.md` → `tasks.md`). **No implementation code until a spec's status is `Ready`.** The repository is public, so CI on standard GitHub-hosted runners is free (DESIGN.md C-4).
 
 ## Working agreement (the maintainer has 1–2 hours per week)
 - **Claude drafts; the maintainer decides.** Don't wait on questions. Draft complete sections, specs, or code with your recommended answers applied. Each decision stands unless the maintainer changes it in review.

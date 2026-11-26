@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (accepted on merge of the design PR) |
+| Status | Accepted (amended in design 03) |
 | Date | 2026-11-26 |
 | Design sections | DESIGN.md §4, §11 |
 | Requirements affected | FR-008, FR-020…FR-036, NFR-004, NFR-010, NFR-011, NFR-012, NFR-015 |
@@ -26,10 +26,13 @@ We will use **Go** for the gateway, the lab servers, the replay client, and the 
 - **Protocol baseline:** MCP revision **2026-07-28** (primary) plus **2025-11-25** (compatibility). 2026-07-28 removed the `initialize` handshake (each request carries its version in `_meta`), added `server/discover`, and replaced server-initiated requests with Multi Round-Trip Requests. Because both revisions will be in use at launch, the gateway detects the revision of each message, applies the same controls to both, and does not translate between them. Unsupported revisions are rejected in `enforce` mode (DESIGN.md §1.3, FR-036).
 
 ## Amendment (2026-11-26, design 02 review)
-The first draft of this ADR said the gateway "forwards other negotiated versions unchanged". That described the 2025-11-25 handshake model, which 2026-07-28 removed. The baseline above replaces it. `VERIFY:` that Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
+The first draft of this ADR said the gateway "forwards other negotiated versions unchanged". That described the 2025-11-25 handshake model, which 2026-07-28 removed. The baseline above replaces it.
+
+## Amendment (2026-11-26, design 03)
+No per-connection version pin is needed for the compatibility tests. The replay client sends raw scripted JSON-RPC rather than using the SDK (DESIGN.md §5.9, decision 29). A Go SDK v1.7.0 server answers a legacy `initialize` at the client's version when that version is supported and older than 2026-07-28 (`negotiatedVersion` in `mcp/shared.go` at tag v1.7.0, read 2026-11-26).
 
 ## Consequences
 - **Easier:** download-and-run releases; native embedding of OPA; fast tests; `go test` drives the attack suite directly; `govulncheck` for dependency scanning.
 - **Harder:** the ML classifier (v0.3) will need ONNX runtime bindings or a sidecar; acceptable since it's optional and later.
-- **SDK pin:** a session-leak fix is reported to ship only in the v1.8.0 prereleases. `VERIFY:` before pinning v1.7.0 in spec 001; the SDK is used only by the lab and replay client, not the gateway.
+- **SDK pin:** the SDK is used only inside the lab servers, not by the gateway or the replay client. Each lab server is a short-lived process started per test, so a session leak, such as the one reported as fixed only in v1.8.0 prereleases, cannot build up. Spec 001 pins the latest stable v1.x at that time, and Dependabot keeps it current.
 - **Revisit if:** the Go SDK falls behind the spec for features we need. The message-level gateway design limits that exposure.

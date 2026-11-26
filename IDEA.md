@@ -90,7 +90,7 @@ Streamable HTTP transport · multi-server aggregation · session taint tracking 
 | LLM guardrails | Prompt-injection classifier models, NeMo Guardrails | Not MCP-aware; no per-tool authorization |
 | Academic benchmarks | MCPTox (AAAI), MCP-SafetyBench | Measure models, not a deployable defense. **Bulwark reuses MCPTox's poisoned tools as detection test data.** |
 
-> `VERIFY:` the features and licenses of each listed project before any public comparison. This list comes from a November 2026 search.
+> This list comes from a November 2026 search. It names projects only to position this one, and makes no claims about their quality. Before any public comparison of features or results (IDEA NG2; planned after v0.1), each project's current features and license will be re-checked and its maintainers contacted.
 
 **Being honest about the field:** many gateways exist. This project stands out through **engineering quality and evidence** (a threat model of the gateway itself, decision records, an attack suite in CI, signed releases), not novelty alone.
 
