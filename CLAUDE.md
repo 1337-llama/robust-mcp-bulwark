@@ -1,9 +1,18 @@
 # Instructions for Claude: MCP Bulwark
 
-A security gateway for MCP. It acts as a server to agents and as a client to upstream servers. It pins and inspects tool definitions, enforces policy-as-code on tool calls, tracks session taint to contain exfiltration, and writes hash-chained audit logs. The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
+An open benchmark and reference defense for AI agent tool security ([ADR-0002](docs/adr/0002-evaluation-first-positioning.md)). **Bulwark Bench** is an attack lab plus harness that measures attack success and benign task success for any MCP defense. **Bulwark Gateway** is the reference defense: an MCP proxy that pins and inspects tool definitions, enforces policy-as-code on tool calls, and writes hash-chained audit logs. The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
 
 ## Current stage
-**Stage 0 → 1.** `IDEA.md` is in its final stress test, then design work begins at `DESIGN.md` §1–§2. **No implementation code yet.** The roadmap is lab-first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md)), so the first specs are 001 (attack lab) and 002 (benchmark harness).
+**Stage 1: Design.** `IDEA.md` is `Ready for design`. `DESIGN.md` §1–§3 are drafted. Next: §4 architecture (add the Bench components) and §7 threat model. **No implementation code yet.** The roadmap is lab-first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md)), so the first specs are 001–005 (Bench).
+
+## Working agreement (the maintainer has 1–2 hours per week)
+- **Claude drafts; the maintainer decides.** Don't wait on questions. Draft complete sections, specs, or code with your recommended answers applied. Each decision stands unless the maintainer changes it in review.
+- **Everything arrives as a pull request** on a branch, never pushed straight to `main`. Each PR must be reviewable in ≤ 30 minutes and start with:
+  1. a plain-language summary of a few sentences (no jargon without explanation)
+  2. **"Decisions for you"**: a short list of each decision made, the recommendation applied, and the alternative
+  3. **"Needs your input"**: only things Claude genuinely cannot decide (money, publishing, direction, disclosure, facts about the maintainer's environment)
+- **Keep everything free ($0).** No paid APIs, hosted services, or paid GitHub features. Local open-weight models through an OpenAI-compatible endpoint by default. Hosted free tiers only if marked `cost: free`, and only after checking their terms of service.
+- **Always the maintainer's call:** spending money, making the repo public, publishing write-ups, contacting other projects' maintainers, and disclosing vulnerabilities.
 
 ## Hard rules
 
@@ -20,7 +29,7 @@ A security gateway for MCP. It acts as a server to agents and as a client to ups
 - **Keep three things separate:** threats MCP Bulwark *mitigates* (DESIGN.md §7.3), threats *to* MCP Bulwark (§7.4), and accepted risks.
 
 ## How to collaborate on the design
-- **Work one section at a time.** Before filling a section, read `IDEA.md`, the related sections, and the ADRs in `docs/adr/`. Then ask the maintainer the section's "Questions to resolve", up to about 5 at a time, each with your recommended answer, before writing.
+- **Work one or two sections per PR.** Before drafting, read `IDEA.md`, the related sections, and the ADRs in `docs/adr/`. Resolve each section's "Questions to resolve" with your recommendation and list them under "Decisions for you" in the PR.
 - **Make recommendations.** State the options briefly, recommend one, and explain why. Record each resolved choice in the DESIGN.md §14 Decision Log, and write a full ADR (`templates/ADR_TEMPLATE.md`) for significant ones.
 - **Write testable requirements.** Number them (`FR-001`, `NFR-001`) and make each one verifiable. Specs trace back to these IDs.
 - **Cite standards precisely:** name, version, and section or ID (for example "OWASP Top 10 for LLM Applications 2026, LLM01").

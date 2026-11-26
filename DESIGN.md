@@ -3,8 +3,8 @@
 ## Document control
 | Field | Value |
 |---|---|
-| Status | Draft (seeded; sections marked 🌱 have starting material, 📝 are not yet written) |
-| Version | 0.3 |
+| Status | Draft: §1–§3 drafted and in review (✅); other sections seeded (🌱) or not yet written (📝) |
+| Version | 0.4 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -15,105 +15,176 @@
 | 0.1 | 2026-11-25 | Initial skeleton with seeded architecture, flows, and threat model starters |
 | 0.2 | 2026-11-26 | Lab-first roadmap: attack lab and baseline benchmark moved to M1; added FR-017/FR-018; spec backlog renumbered |
 | 0.3 | 2026-11-26 | Moved to standalone repository; renamed to MCP Bulwark (CLI `bulwark`); decision 1 recorded as ADR-0001 |
+| 0.4 | 2026-11-26 | Evaluation-first positioning (ADR-0002): Bench + Gateway. Drafted §1–§3; renumbered FR/NFR; stdio-only v0.1; $0 constraint; updated milestones, decisions, and spec backlog |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
 ---
 
-## 1. Context and scope 🌱
+## 1. Context and scope ✅ (drafted v0.4, in review)
 
 ### 1.1 Background
-The Model Context Protocol (MCP) is a JSON-RPC 2.0 protocol. Through it, an **MCP client** (inside an agent host such as an IDE, desktop assistant, or custom agent) discovers and invokes **tools**, **resources**, and **prompts** exposed by **MCP servers**. Transports are **stdio** (the server runs as a local subprocess) and **Streamable HTTP** (a remote server). Everything a server says about its tools reaches the model's context, which makes the client–server boundary a security boundary that is rarely enforced.
+The **Model Context Protocol (MCP)** is a JSON-RPC 2.0 protocol. Through it, an **MCP client** (inside an agent host such as an IDE, desktop assistant, or custom agent) discovers and invokes **tools**, **resources**, and **prompts** exposed by **MCP servers**. Servers run locally over **stdio** (as a subprocess) or remotely over **Streamable HTTP**. Everything a server says about its tools reaches the model's context, which makes the client–server boundary a security boundary that is rarely enforced.
 
-MCP Bulwark is an **MCP-aware intermediary**. To the client it acts as a server, and to each upstream server it acts as a client. That position lets it inspect and control every message.
+MCP Bulwark has two components ([ADR-0002](docs/adr/0002-evaluation-first-positioning.md)):
+
+```mermaid
+flowchart LR
+  subgraph Bench["Bulwark Bench (measure)"]
+    R["Agent runner<br/>(LLM tool-calling loop)"]
+    S["Scorer + reports"]
+    K[("Local sink<br/>(canary capture)")]
+  end
+  subgraph Slot["Defense slot (defense under test)"]
+    D["none · Bulwark Gateway · third-party proxy"]
+  end
+  subgraph Lab["Attack lab (LAB ONLY)"]
+    L["Malicious-but-harmless<br/>MCP servers L-01…L-06<br/>+ imported MCPTox cases"]
+  end
+  M[("Local open-weight model<br/>OpenAI-compatible endpoint")]
+  R <--> M
+  R <-->|"MCP over stdio"| D <-->|"MCP over stdio"| L
+  L -. "exfiltration attempts" .-> K
+  K --> S
+  R --> S
+```
+
+- **Bulwark Bench** runs an agent against lab servers, through a pluggable **defense slot**, and measures attack success and benign task success.
+- **Bulwark Gateway** is an MCP-aware intermediary. It acts as a server to the client and as a client to the upstream server, so it can inspect and control every message. It is the reference defense evaluated by Bench.
 
 ### 1.2 Scope
-- **In scope:** tools (`tools/list`, `tools/call`, `notifications/tools/list_changed`). Resources and prompts get at least pinning and audit.
-- **Decide:** server-to-client features (sampling, elicitation, roots). Pass through with audit, or enforce?
-- **Out of scope:** see IDEA.md non-goals.
+
+| Area | In scope for v0.1 | Deferred |
+|---|---|---|
+| Transport | stdio | Streamable HTTP (v0.2) |
+| Servers per gateway | One upstream server per gateway process | Multi-server aggregation with namespacing (v0.2) |
+| MCP features enforced | `tools/list`, `tools/call`, `notifications/tools/list_changed` | Resources and prompts: pinning and audit only (v0.2) |
+| Server-initiated requests (sampling, elicitation, roots) | **Passed through and audited, not enforced** | Policy enforcement (v0.2+) |
+| Scenarios | Single-turn tasks: one user request, multiple tool calls | Multi-turn conversations (v0.2) |
+| Models | Local open-weight models through an OpenAI-compatible endpoint | Optional free hosted tiers; frontier models |
+| Defenses evaluated | `none`, Bulwark Gateway | Third-party gateways (with NG2 safeguards) |
 
 ### 1.3 Target protocol revision
-`VERIFY:` the latest MCP specification revision at design time. Revision `2025-11-25` is the most recent known to the drafter. Pin one revision, and document how version negotiation (`initialize` → `protocolVersion`) is handled when client and server versions differ.
+`VERIFY:` the latest MCP specification revision at design time. Revision `2025-11-25` is the most recent known to the drafter. v0.1 pins one revision. If client and server propose different `protocolVersion` values in `initialize`, the gateway forwards the negotiation unchanged and records both values in the audit log.
 
 ### 1.4 Glossary
 | Term | Definition |
 |---|---|
 | Tool definition | The `name`, `title`, `description`, `inputSchema`, `outputSchema`, and `annotations` of a tool, as returned by `tools/list` |
 | Fingerprint | SHA-256 over the canonicalized (RFC 8785 JCS) tool definition |
-| Pinning | Recording an approved fingerprint and refusing or alerting on any difference |
+| Pinning | Recording an approved fingerprint and alerting on or blocking any difference |
 | Rug pull | A tool definition that changes after approval |
 | Tool poisoning | Instructions aimed at the model hidden in tool metadata |
-| Tool shadowing | A tool whose description manipulates how the agent uses *another* server's tools |
-| Taint label | A session-level marker such as `untrusted_content` or `sensitive_data`, set when certain tool results enter the context |
-| Principal | The identity on whose behalf a call is made (user, agent, or both) |
-
-**Questions to resolve**
-1. Should the MVP cover tools only, or also resources and prompts?
-2. Which MCP spec revision is the baseline, and what is the policy on older clients and servers?
-3. How should sampling and elicitation (server → client) be handled in v0.1?
+| Tool shadowing | A tool whose description manipulates how the agent uses *another* tool |
+| Scenario | A lab server plus a user task, an attack, and success predicates |
+| Canary | A fake secret planted in the lab. If it reaches the sink, data was exfiltrated |
+| Sink | A local-only listener that records canaries the agent was tricked into sending |
+| Defense under test | Whatever occupies the defense slot: `none`, Bulwark Gateway, or another proxy |
+| Run | One execution of one scenario with one model and one defense |
+| Cell | All repeated runs of one (scenario, model, defense) combination |
+| **ASR** (attack success rate) | Fraction of valid runs in a cell where the scenario's attack predicate is met |
+| **Benign task success** | Fraction of runs where the agent completes the legitimate user task |
+| Run outcome | One of: `attack_success`, `attack_blocked_task_ok`, `attack_blocked_task_failed`, `invalid` (harness or model error). Kept separate so a model that does nothing isn't counted as "secure". |
 
 ---
 
-## 2. Requirements 🌱
+## 2. Requirements ✅ (drafted v0.4, in review)
 
-### 2.1 Functional requirements (draft; refine with Claude)
+Requirement IDs: **FR-001…FR-019 Bench**, **FR-020…FR-039 Gateway v0.1**, **FR-040+ later**.
+
+### 2.1 Functional requirements
+
+**Bulwark Bench**
 | ID | Requirement | Priority | Source |
 |---|---|---|---|
-| FR-001 | The gateway shall proxy MCP over stdio by launching and wrapping an upstream server command. | MVP | G1 |
-| FR-002 | The gateway shall proxy MCP over Streamable HTTP to remote upstream servers. | MVP | G1 |
-| FR-003 | The gateway shall aggregate multiple upstream servers behind one client connection, namespacing tool names to prevent collisions. | MVP | G1, G2 |
-| FR-004 | The gateway shall compute a fingerprint for every tool definition and compare it to the pinned value. | MVP | G2 |
-| FR-005 | When a tool is new or its fingerprint changed, the gateway shall act according to pinning mode (`learn` / `warn` / `enforce`). In `enforce`, the tool is hidden from the client until approved. | MVP | G2 |
-| FR-006 | The gateway shall run static analyzers on tool definitions and attach findings with severities. | MVP | G2 |
-| FR-007 | The gateway shall evaluate a policy for every `tools/call` and enforce `allow`, `deny`, or `ask`. | MVP | G3 |
-| FR-008 | Policies shall be able to constrain arguments (for example path prefixes, domain allowlists, value patterns). | MVP | G3 |
-| FR-009 | The gateway shall detect and redact secrets in tool arguments and results according to configuration. | MVP | G3, G4 |
-| FR-010 | The gateway shall write an audit record for every message it decides on, with a hash chain over the records. | MVP | G5 |
-| FR-011 | A CLI shall list tools, show diffs between pinned and current definitions, approve or reject them, and verify the audit chain. | MVP | G2, G5 |
-| FR-012 | The gateway shall maintain session taint labels based on tool classifications and result inspection. | Later | G4 |
-| FR-013 | Policies shall be able to reference session taint state. | Later | G4 |
-| FR-014 | The gateway shall score tool results and definitions with a prompt-injection classifier. | Later | G2, G4 |
-| FR-015 | An approval broker shall route `ask` decisions to a human channel and enforce timeouts. | Later | G3 |
-| FR-016 | The gateway shall export audit events as OpenTelemetry and OCSF. | Later | G5 |
-| FR-017 | The project shall include an attack lab of deliberately malicious but harmless MCP servers implementing scenarios L-01…L-06 (§10.3), using only canary secrets and a local exfiltration sink. | MVP | G7 |
-| FR-018 | A benchmark harness shall run each lab scenario against configurable agents (client + model) in `direct`, `gateway-warn`, and `gateway-enforce` modes, and report attack success rate (ASR) and benign task success rate. | MVP | G7 |
+| FR-001 | Bench shall provide lab scenarios L-01…L-06 (§10.3) as stdio MCP servers. Each scenario declares its ID, technique, OWASP/ATLAS mapping, user task, attack predicate, and benign-task predicate in a machine-readable manifest. | MVP | G1, G6 |
+| FR-002 | Lab servers shall use canary secrets only, send data only to the local sink, and make no network connections other than to the loopback sink. | MVP | G6 |
+| FR-003 | The agent runner shall execute a scenario's user task with an LLM tool-calling loop against the configured MCP server(s), bounded by a maximum step count and a wall-clock timeout. | MVP | G1 |
+| FR-004 | The runner shall talk to models through an OpenAI-compatible chat-completions interface with tool calling, configured by base URL and model name. | MVP | G1, G3 |
+| FR-005 | The runner shall launch each lab server through the defense slot, configured as `none` or as a command that wraps the upstream stdio command (for example `bulwark wrap -- <server command>`). | MVP | G2 |
+| FR-006 | The scorer shall assign each run exactly one run outcome (§1.4) using the scenario's predicates, the sink log, and the run transcript. | MVP | G1 |
+| FR-007 | Bench shall run each cell N times (configurable; default 20) and report ASR and benign task success with 95% Wilson score confidence intervals. | MVP | G1, G5 |
+| FR-008 | Every benchmark execution shall write a run manifest: model name and weights digest, endpoint type, sampling parameters and seeds, defense name and version, scenario versions, harness commit, and timestamps. Full transcripts are stored per run. | MVP | G5 |
+| FR-009 | Bench shall produce a Markdown report and a JSON results file comparing defenses per model and per scenario. | MVP | G5 |
+| FR-010 | Bench shall import a subset of MCPTox test cases into its scenario format, if the MCPTox license permits (`VERIFY:` license and data format). | MVP | G1 |
+| FR-011 | Bench shall refuse to call any model endpoint not marked `cost: free` in configuration (cost guard). | MVP | G3 |
 
-### 2.2 Non-functional requirements (draft)
+**Bulwark Gateway (v0.1, stdio)**
+| ID | Requirement | Priority | Source |
+|---|---|---|---|
+| FR-020 | Gateway shall wrap one upstream stdio server command and proxy all MCP messages between client and server transparently when no policy applies. | MVP | G4 |
+| FR-021 | Gateway shall fingerprint every tool definition and compare it to the pin store. New or changed tools are handled by mode: `learn` (pin automatically), `warn` (forward and alert), `enforce` (hide the tool from the client until approved). | MVP | G4 |
+| FR-022 | Gateway shall run static analyzers on tool definitions and record findings with severities. At minimum: hidden Unicode, model-directed instructions, cross-tool references, and side-channel schema parameters. | MVP | G4 |
+| FR-023 | Gateway shall evaluate a policy for every `tools/call` and enforce `allow` or `deny`. `ask` is resolved by an interactive terminal prompt when one is available; otherwise it is treated as `deny`. | MVP | G4 |
+| FR-024 | Policies shall be able to constrain arguments: path prefixes, URL/domain allowlists, and regex patterns. | MVP | G4 |
+| FR-025 | Gateway shall detect secrets in tool arguments and results (pattern and entropy based) and redact them according to configuration. | MVP | G4 |
+| FR-026 | Gateway shall write an audit record for every decision, chained with SHA-256 hashes so that any modification or deletion is detectable. | MVP | G4 |
+| FR-027 | The CLI shall support: `wrap`, `tools list/diff/approve/reject`, `policy test`, and `audit verify/tail`. | MVP | G4 |
+
+**Later (v0.2+)**
+| ID | Requirement | Priority |
+|---|---|---|
+| FR-040 | Streamable HTTP transport | Later |
+| FR-041 | Multi-server aggregation with tool namespacing | Later |
+| FR-042 | Session taint tracking and taint-aware policy | Later |
+| FR-043 | Out-of-band human approval broker | Later |
+| FR-044 | Prompt-injection classifier tier | Later |
+| FR-045 | OpenTelemetry and OCSF audit export | Later |
+| FR-046 | MCP-SafetyBench import and multi-turn scenarios | Later |
+| FR-047 | Evaluation of third-party defenses, with NG2 safeguards | Later |
+
+### 2.2 Non-functional requirements
 | ID | Category | Requirement | Measure |
 |---|---|---|---|
-| NFR-001 | Performance | Added latency p95 < 5 ms per message on the fast path (no ML, no human approval) | Load test, §10.2 |
-| NFR-002 | Reliability | Configurable fail-closed (default) or fail-open when the policy engine is unavailable | Fault-injection test |
-| NFR-003 | Security | The gateway holds upstream credentials. Clients never receive upstream tokens (no token passthrough). | Code review + integration test |
-| NFR-004 | Integrity | Audit log tampering is detectable by `verify` | Tamper test |
-| NFR-005 | Usability | Quickstart takes under 10 minutes | Timed run-through |
-| NFR-006 | Portability | Runs on Linux, macOS, and Windows; ships as a single binary and a container image | CI matrix |
-| NFR-007 | Privacy | No data leaves the host by default (local classifier; no telemetry) | Config review + network test |
-| NFR-008 | Compatibility | Works unmodified with at least 3 popular MCP clients | Compatibility matrix |
+| NFR-001 | Cost | Development, CI, and benchmark runs use no paid service | Dependency and config review; FR-011 cost guard test |
+| NFR-002 | Reproducibility | Rerunning a manifest with the same local model weights gives rates inside the original 95% confidence intervals | Repeat-run test |
+| NFR-003 | Lab safety | The full lab passes when run in a container with all networking disabled except loopback, and any other connection attempt fails the run | CI test |
+| NFR-004 | Performance | Gateway adds p95 < 5 ms per message (no ML, no human approval) | Load test |
+| NFR-005 | Reliability | Gateway fails closed by default if policy evaluation errors | Fault-injection test |
+| NFR-006 | Integrity | `audit verify` detects any modified, inserted, or deleted audit record | Tamper tests |
+| NFR-007 | Privacy | No data leaves the host by default: local models, no telemetry | Config review + network test |
+| NFR-008 | Bench runtime | A smoke subset (all scenarios × 1 model × 2 defenses × 3 runs) finishes in ≤ 15 minutes on a CPU-only machine with 16 GB RAM (`VERIFY:` against the chosen model size) | Timed run |
+| NFR-009 | Portability | Linux and macOS supported; Windows best-effort | CI matrix (Linux), manual check (macOS) |
+| NFR-010 | Compatibility | Gateway works unmodified with the Bench runner and ≥ 2 real MCP clients | Manual compatibility checklist per release |
+| NFR-011 | Usability | Quickstart from clone to first benchmark report in ≤ 15 minutes (excluding model download) | Timed run-through |
 
-**Questions to resolve**
-1. Are the latency targets right? What is the latency budget for the ML classifier tier?
-2. Should the default be fail-closed or fail-open? Should this differ between local developer mode and central deployment?
-3. Which MCP clients make up the compatibility matrix?
+### 2.3 Constraints and assumptions
+| ID | Type | Statement |
+|---|---|---|
+| C-1 | Constraint | $0 budget (NFR-001). No paid APIs, hosted services, or paid GitHub features. |
+| C-2 | Constraint | Maintainer time is 1–2 hours/week. Claude drafts and the maintainer reviews PRs. PRs should be reviewable in ≤ 30 minutes. |
+| C-3 | Constraint | The repo stays private until the M1 write-up. Heavy runs happen locally, not in GitHub Actions. |
+| A-1 | Assumption | The maintainer's computer can run a quantized open-weight model of about 7–8B parameters. **`VERIFY:` with the maintainer (IDEA Q4).** If not, the smoke subset uses a smaller model and full runs use a free hosted tier. |
+| A-2 | Assumption | A scripted agent runner is representative enough of real agents for measuring *relative* defense effectiveness. Desktop and IDE clients can't be automated reliably at $0, so they are covered by manual compatibility checks (NFR-010), not by the benchmark. |
+| A-3 | Assumption | Small open models support tool calling well enough to complete benign tasks most of the time. If benign task success in the `none` condition is below 50%, the model is excluded from headline results. |
 
 ---
 
-## 3. Users and use cases 📝
+## 3. Users and use cases ✅ (drafted v0.4, in review)
 
-Seed use cases to expand into full flows:
-- **UC-01** A developer wraps a third-party stdio server locally, and the gateway catches a poisoned tool description.
-- **UC-02** A server silently changes a tool description (rug pull). The tool is quarantined and a diff is shown.
-- **UC-03** An agent reads a web page containing an injection, then tries to email internal data. The egress call is blocked because the session is tainted.
-- **UC-04** A platform team deploys the gateway centrally with per-team policies.
-- **UC-05** An IR analyst reconstructs an agent session from audit logs during an investigation.
-- **UC-06** An auditor exports evidence that tool access is governed (feeds AI Compliance-as-Code).
+### 3.1 Personas
+See [IDEA.md](IDEA.md#target-users). The primary persona for v0.1 is the **security researcher / evaluator** (Bench), and secondarily the **developer using agents locally** (Gateway).
 
-**Questions to resolve**
-1. Which two use cases are the "hero demos" for the README and launch?
-2. For central deployment, what is the tenancy model (per team, per agent, per user)?
+### 3.2 Use cases
+| ID | Actor | Trigger | Main flow | Outcome | Traces to |
+|---|---|---|---|---|---|
+| UC-01 | Researcher | Wants a baseline for a model | `bulwark bench run --defense none --model <m>` runs all scenarios N times | Report with ASR and benign success per scenario, with CIs | FR-001…009 |
+| UC-02 | Researcher | Wants to know if a defense helps | Same run with `--defense none,bulwark` | Side-by-side report: ASR reduction and utility cost | FR-005, FR-007, FR-009 |
+| UC-03 | Developer | Adds a third-party stdio server | Wraps it with `bulwark wrap -- <cmd>` in `learn` mode, reviews findings, switches to `enforce` | Poisoned description flagged; tool hidden until approved | FR-020…022, FR-027 |
+| UC-04 | Developer | Server silently changes a tool (rug pull) | Gateway detects fingerprint mismatch on the next `tools/list` | Tool quarantined; `bulwark tools diff` shows the change | FR-021, FR-027 |
+| UC-05 | Developer | Hijacked agent tries to send data to an unapproved domain | Policy with a domain allowlist evaluates the `tools/call` | Call denied with policy ID; audit record written | FR-023, FR-024, FR-026 |
+| UC-06 | IR analyst | Investigating an agent's actions | `bulwark audit verify`, then `audit tail` filtered by session | Integrity confirmed; session reconstructed | FR-026, FR-027 |
+| UC-07 | Contributor | Wants to add an attack | Proposes a scenario through the issue template; implements it under `lab/` with a manifest | New scenario included in the next benchmark run | FR-001, FR-002 |
+
+### 3.3 Hero demos (README and write-ups)
+1. **UC-02 "Does it actually help?"**: one table showing ASR and benign task success with and without the gateway.
+2. **UC-04 "Rug pull caught"**: a terminal recording of a tool changing after approval, being quarantined, and the diff being shown.
 
 ---
 
 ## 4. Architecture 🌱
+
+> **Pending revision (next design PR):** add the Bulwark Bench components (runner, defense slot, scorer, sink) shown in §1.1, and reduce Gateway to one upstream server for v0.1 (§1.2). The diagrams below still show the full multi-server Gateway.
 
 ### 4.1 System context
 
@@ -381,7 +452,7 @@ TB1 agent host ↔ gateway · TB2 gateway internals and state · TB3 gateway ↔
 | Indirect injection through tool results | `VERIFY:` ASI01 Agent Goal Hijack | LLM01 | Classifier, taint labels |
 | Data exfiltration through egress tools or arguments | `VERIFY:` ASI02 | LLM02 Sensitive Information Disclosure | Taint policies, DLP, argument constraints |
 | Excessive agency / over-privileged tools | `VERIFY:` ASI03 Identity & Privilege Abuse | `VERIFY:` Excessive Agency ID in 2026 list | Least-privilege policies |
-| Token passthrough / confused deputy | `VERIFY:` ASI03 | — | Gateway-held credentials (NFR-003) |
+| Token passthrough / confused deputy | `VERIFY:` ASI03 | — | Gateway-held credentials (with Streamable HTTP, v0.2) |
 | Exploiting human approval | `VERIFY:` ASI09 Human-Agent Trust Exploitation | — | Clear diffs, rate limits, approve by policy |
 
 > `VERIFY:` all Agentic Top 10 IDs and titles against genai.owasp.org before approval. Also map to **MITRE ATLAS** techniques.
@@ -429,7 +500,7 @@ Seed: structured logs, Prometheus metrics (decisions by type, latency histograms
 Unit (analyzers, canonicalization, policy adapters) · property-based and fuzz tests (JSON-RPC parser, framing) · integration (real reference MCP servers) · end-to-end (real MCP clients with scripted agents).
 
 ### 10.2 NFR verification
-Load test with a synthetic client/server pair to measure gateway-only latency (NFR-001). Fault injection for fail-closed behavior (NFR-002). Tamper tests (NFR-004).
+Load test with a synthetic client/server pair to measure gateway-only latency (NFR-004). Fault injection for fail-closed behavior (NFR-005). Tamper tests on the audit log (NFR-006). Full lab run in a network-isolated container (NFR-003). Repeat-run reproducibility check (NFR-002). Timed smoke subset (NFR-008).
 
 ### 10.3 Attack lab and benchmark
 The lab is built **first** (M1, see §12). It establishes the baseline problem before any defenses exist, and every later milestone is measured against it.
@@ -456,11 +527,11 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | M0 | Design approved | Design review checklist passed |
-| M1 | **Attack lab + benchmark harness; baseline with no gateway** | L-01…L-06 reproducible; baseline ASR measured for ≥2 agents (client + model); **public write-up #1:** how easily agents are hijacked through their tools |
-| M2 | Transparent proxy: stdio + HTTP passthrough with audit log | Works with 3 clients; benchmark runs through the gateway with unchanged benign task success; audit chain verifies |
+| M1 | **Bulwark Bench: attack lab + harness + MCPTox subset; baseline with no defense** | L-01…L-06 pass the network-isolation test; baseline ASR measured for 2 local models from different vendors; **public write-up #1:** how easily agents are hijacked through their tools |
+| M2 | Transparent stdio proxy with audit log | Works with the Bench runner and 2 real clients; benchmark through the gateway shows unchanged benign task success; audit chain verifies |
 | M3 | Registry + pinning + static analyzers + CLI | Lab L-01, L-02, L-03, L-06 detected |
-| M4 | Policy engine + argument constraints + secret redaction; **v0.1 release** | Policy test suite; NFR-001 met; **public write-up #2:** before/after ASR |
-| M5 | Taint tracking + approval broker | L-04, L-05 contained |
+| M4 | Policy engine + argument constraints + secret redaction; **v0.1 release** | Policy test suite; NFR-004 met; **public write-up #2:** before/after ASR |
+| M5 | Taint tracking + approval broker + Streamable HTTP + multi-server aggregation | L-04, L-05 contained |
 | M6 | Classifier tier + OTel/OCSF; **v0.2 release** | Classifier eval report |
 
 **Why lab-first:** the maintainer's strength is offensive security. Building the attacks first (1) produces a publishable result early, (2) gives every later milestone an objective before/after measurement, and (3) keeps the defenses focused on attacks that are shown to work rather than hypothetical ones.
@@ -474,33 +545,40 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 | # | Decision | Rationale | ADR | Date |
 |---|---|---|---|---|
 | 1 | Lab-first roadmap: attack lab and baseline benchmark are M1, before any gateway code | Plays to offensive strengths, publishes a result early, and gives every milestone an objective before/after measure | [ADR-0001](docs/adr/0001-lab-first-roadmap.md) | 2026-11-26 |
+| 2 | Evaluation-first positioning: Bench (measure any defense) + Gateway (reference defense) | The gateway field is crowded with self-reported claims; independent measurement is the unfilled gap | [ADR-0002](docs/adr/0002-evaluation-first-positioning.md) | 2026-11-26 |
+| 3 | v0.1 Gateway is stdio-only with one upstream server | Cuts the MVP to a size one person can deliver; covers the local-developer use case | — | 2026-11-26 |
+| 4 | $0 budget: local open-weight models, OSS dependencies, GitHub Free | Maintainer constraint; also improves reproducibility (pinned model weights) | — | 2026-11-26 |
+| 5 | Reuse an MCPTox subset in v0.1; MCP-SafetyBench later | Makes results comparable with published research | — | 2026-11-26 |
+| 6 | Sampling/elicitation passed through and audited, not enforced, in v0.1 | Keeps the MVP small; still visible in audit logs | — | 2026-11-26 |
+| 7 | Working agreement: Claude drafts with recommendations applied; maintainer reviews by PR | Maintainer has 1–2 h/week | — | 2026-11-26 |
 
-### 14.2 Open questions (carried from IDEA.md)
-- Q0 Lab implementation language. Can it differ from the gateway's? (The lab servers are small; using the official MCP SDK in TypeScript or Python is fine either way.)
-- Q1 Core language: Go (official Go MCP SDK; `VERIFY:` maturity) vs. Python (official Python SDK; ML ecosystem) vs. hybrid
-- Q2 Cedar vs. OPA/Rego
-- Q3 Principal identity on stdio
-- Q4 Scope of sampling/elicitation handling
-- Q5 Classifier strategy
+### 14.2 Open questions
+- Q1 Core language for Gateway and Bench (ADR due with §5)
+- Q2 Policy engine: Cedar vs. OPA/Rego (ADR due with §5)
+- Q3 Which two local open-weight models (different vendors) with reliable tool calling. Depends on Q4
+- Q4 **Maintainer input needed:** hardware available for local models (GPU? RAM?)
+- Q5 Classifier strategy (v0.2)
 
 ## 15. Spec backlog (draft)
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
-| 001 | Attack lab scenarios L-01…L-06 (canary secrets, local sink) | FR-017 | M1 |
-| 002 | Benchmark harness + baseline report | FR-018 | M1 |
-| 003 | stdio proxy passthrough | FR-001 | M2 |
-| 004 | Streamable HTTP proxy passthrough | FR-002, NFR-003 | M2 |
-| 005 | Hash-chained audit log + `audit verify` | FR-010, NFR-004 | M2 |
-| 006 | Multi-server aggregation + namespacing | FR-003 | M3 |
-| 007 | Fingerprinting + pin store + modes | FR-004, FR-005 | M3 |
-| 008 | Static analyzers framework + first 6 analyzers | FR-006 | M3 |
-| 009 | `tools` CLI (list/diff/approve) | FR-011 | M3 |
-| 010 | Policy engine integration + decision input | FR-007, FR-008 | M4 |
-| 011 | Secret detection + redaction | FR-009 | M4 |
-| 012 | Taint tracker + taint-aware policy | FR-012, FR-013 | M5 |
-| 013 | Approval broker | FR-015 | M5 |
-| 014 | Injection classifier tier | FR-014 | M6 |
-| 015 | OTel + OCSF exporters | FR-016 | M6 |
+| 001 | Lab scenarios L-01…L-06 + scenario manifest + sink | FR-001, FR-002, NFR-003 | M1 |
+| 002 | Agent runner + OpenAI-compatible model adapter + cost guard | FR-003, FR-004, FR-011 | M1 |
+| 003 | Defense slot + scorer + repetitions and confidence intervals | FR-005, FR-006, FR-007 | M1 |
+| 004 | Run manifests + reports | FR-008, FR-009, NFR-002 | M1 |
+| 005 | MCPTox subset import | FR-010 | M1 |
+| 006 | stdio proxy passthrough | FR-020, NFR-004 | M2 |
+| 007 | Hash-chained audit log + `audit verify/tail` | FR-026, NFR-006 | M2 |
+| 008 | Fingerprinting + pin store + modes | FR-021 | M3 |
+| 009 | Static analyzers (first 4) | FR-022 | M3 |
+| 010 | `tools` CLI (list/diff/approve/reject) | FR-027 | M3 |
+| 011 | Policy engine + argument constraints + `policy test` | FR-023, FR-024, NFR-005 | M4 |
+| 012 | Secret detection + redaction | FR-025 | M4 |
+| 013 | Taint tracker + taint-aware policy | FR-042 | M5 |
+| 014 | Approval broker | FR-043 | M5 |
+| 015 | Streamable HTTP + multi-server aggregation | FR-040, FR-041 | M5 |
+| 016 | Injection classifier tier | FR-044 | M6 |
+| 017 | OTel + OCSF exporters | FR-045 | M6 |
 
 ## Appendix: References
 - Model Context Protocol specification: modelcontextprotocol.io (`VERIFY:` pinned revision)

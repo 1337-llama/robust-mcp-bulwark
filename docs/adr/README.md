@@ -5,3 +5,4 @@ Significant design decisions, recorded with context, the options considered, and
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-lab-first-roadmap.md) | Lab-first roadmap | Accepted |
+| [0002](0002-evaluation-first-positioning.md) | Evaluation-first positioning (Bench + Gateway) | Proposed |
