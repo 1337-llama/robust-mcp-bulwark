@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted; amended by [ADR-0002](0002-gateway-with-attack-suite.md) |
 | Date | 2026-11-26 |
 | Design sections | DESIGN.md §10.3, §12, §15 |
 | Requirements affected | FR-017, FR-018; goal G7 |
@@ -30,3 +30,6 @@ We will adopt **Option B**. M1 delivers the attack lab (scenarios L-01…L-06), 
 - **Safety:** lab servers must meet strict harmlessness constraints (canary secrets, local sink, no external network). Spec 001 encodes these as acceptance criteria.
 - **Disclosure:** if baseline runs reveal a real vulnerability in a specific product, follow coordinated disclosure before write-up #1 mentions it (SECURITY.md).
 - **Revisit if:** the harness turns out to be impractical without a working proxy. In that case, bring the M2 passthrough proxy forward into M1.
+
+## Amendment (2026-11-26, ADR-0002)
+The maintainer has no capacity to run or validate live-model experiments, and the project's purpose is a software portfolio. "Lab first" therefore now means **attack tests are written before the features that block them**, using a deterministic scripted replay client instead of live AI agents. There is no LLM cost and no baseline measurement of models; the design cites published research for that. The M1 write-up is dropped in favor of one launch write-up at v0.1. M1 now also includes the transparent proxy and audit log, so the suite runs through Bulwark from the start.

@@ -1,9 +1,11 @@
 # Instructions for Claude: MCP Bulwark
 
-An open benchmark and reference defense for AI agent tool security ([ADR-0002](docs/adr/0002-evaluation-first-positioning.md)). **Bulwark Bench** is an attack lab plus harness that measures attack success and benign task success for any MCP defense. **Bulwark Gateway** is the reference defense: an MCP proxy that pins and inspects tool definitions, enforces policy-as-code on tool calls, and writes hash-chained audit logs. The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
+A security gateway for AI agents: an MCP proxy that pins and inspects tool definitions, enforces policy-as-code on tool calls, redacts secrets, and writes hash-chained audit logs. It ships with a deterministic **attack suite** (harmless lab servers + a scripted replay client) that proves every protection in CI ([ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)). The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
+
+**Purpose: a portfolio project for potential employers.** Optimize for shipped, tested, well-documented software that a reviewer can evaluate in 10 minutes, not for research.
 
 ## Current stage
-**Stage 1: Design.** `IDEA.md` is `Ready for design`. `DESIGN.md` §1–§3 are drafted. Next: §4 architecture (add the Bench components) and §7 threat model. **No implementation code yet.** The roadmap is lab-first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md)), so the first specs are 001–005 (Bench).
+**Stage 1: Design.** `IDEA.md` is `Ready for design`. `DESIGN.md` §1–§3 are drafted. Next: §4 architecture (add the attack suite components), §7 threat model, and the language and policy-engine ADRs. **No implementation code yet.** The roadmap is attacks first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended), so the first specs are 001–004 (attack suite, replay client, proxy, audit log).
 
 ## Working agreement (the maintainer has 1–2 hours per week)
 - **Claude drafts; the maintainer decides.** Don't wait on questions. Draft complete sections, specs, or code with your recommended answers applied. Each decision stands unless the maintainer changes it in review.
@@ -11,7 +13,8 @@ An open benchmark and reference defense for AI agent tool security ([ADR-0002](d
   1. a plain-language summary of a few sentences (no jargon without explanation)
   2. **"Decisions for you"**: a short list of each decision made, the recommendation applied, and the alternative
   3. **"Needs your input"**: only things Claude genuinely cannot decide (money, publishing, direction, disclosure, facts about the maintainer's environment)
-- **Keep everything free ($0).** No paid APIs, hosted services, or paid GitHub features. Local open-weight models through an OpenAI-compatible endpoint by default. Hosted free tiers only if marked `cost: free`, and only after checking their terms of service.
+- **Keep everything free ($0).** No paid APIs, hosted services, or paid GitHub features.
+- **No manual testing by the maintainer.** Every requirement must be verifiable by an automated test in GitHub Actions. Never design work that requires the maintainer to run models, experiments, or local tests. v0.1 needs no AI model at all.
 - **Always the maintainer's call:** spending money, making the repo public, publishing write-ups, contacting other projects' maintainers, and disclosing vulnerabilities.
 
 ## Hard rules
