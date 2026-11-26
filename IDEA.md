@@ -2,136 +2,140 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Ready for design |
 | Theme | Securing AI |
 | Repository | `robust-mcp-bulwark` · CLI name: `bulwark` |
 | Last updated | 2026-11-26 |
 
 ## Elevator pitch
 
-MCP Bulwark is a **security gateway that sits between AI agents and the MCP servers that give them tools**. It pins and inspects every tool definition, enforces least-privilege policy-as-code on every tool call, tracks untrusted data through an agent session to block exfiltration paths, and writes a tamper-evident audit trail. It is a drop-in proxy: point the agent at the gateway instead of the server.
+MCP Bulwark is a **security gateway for AI agents**. It sits between an agent and the MCP servers that give it tools. It pins and inspects every tool definition, enforces least-privilege policy on every tool call, redacts secrets, and keeps a tamper-evident audit trail. It is a drop-in wrapper: `bulwark wrap -- <server command>`.
+
+It ships with a **built-in attack suite**: deliberately malicious (harmless) MCP servers plus scripted attacks that run in CI on every change. Every security claim in the README is backed by a test that runs automatically.
 
 ## Problem
 
-AI agents are increasingly given real capabilities through the Model Context Protocol (MCP): file systems, shells, email, ticketing, cloud APIs. This creates a new attack surface that existing security controls don't see:
+AI agents get real capabilities (file systems, shells, email, cloud APIs) through the Model Context Protocol (MCP). This opens attack paths that existing controls don't see:
 
-- **Tool definitions are an injection channel.** Tool names, descriptions, and schemas go straight into the model's context. A malicious or compromised server can hide instructions there (*tool poisoning*). The user never sees them, but the model follows them.
-- **Approval is one-time and trust is permanent.** Users approve a server once. Its tool definitions can change later (*rug pull*), and nothing alerts anyone.
-- **Tool outputs are untrusted input.** Content returned by a web-fetch or email-read tool can carry indirect prompt injection that hijacks the agent's next action.
-- **Exfiltration is easy once three conditions meet:** access to private data, exposure to untrusted content, and a tool that can communicate externally (the "lethal trifecta", a term coined by Simon Willison). Most agent setups have all three in one session.
-- **No authorization or audit at the tool boundary.** Organizations rarely have an inventory of which agents can call which tools with which arguments, and they rarely have a reliable record of what agents actually did.
-
-Most existing defenses are either **static scanners** run at install time, or **content guardrails** on chat prompts. Neither enforces policy on each tool call at runtime.
+- **Tool definitions are an injection channel.** Tool names, descriptions, and schemas go straight into the model's context. A malicious server can hide instructions there (*tool poisoning*).
+- **Approval is one-time.** A tool definition can change after a user approves it (*rug pull*).
+- **Tool outputs are untrusted input.** Content from web pages, emails, or issues can carry indirect prompt injection.
+- **Exfiltration is easy** once private data, untrusted content, and a tool that can send data out all meet in one session (the "lethal trifecta", Simon Willison).
+- **No authorization or audit at the tool boundary.** Few organizations control which agent may call which tool with which arguments, or keep a reliable record of what agents did.
 
 ## Why now
 
-- Demand for AI Security Engineers grew **268%** year over year (CyberSN data via SecurityWeek, 2026). Hands-on experience with AI agents is the competency hiring leaders say is hardest to find (Cisco, 2026).
-- OWASP published the **Top 10 for Agentic Applications** (December 2025) and the **2026 Top 10 for LLM Applications** (August 2026). Prompt injection is still #1.
-- 2026 academic research found that most major MCP clients have significant weaknesses in validating tool definitions (arXiv 2603.22489). The Cloud Security Alliance published a whitepaper on tool poisoning and rug pulls (May 2026).
+- On the MCPTox benchmark, several popular models fell for tool poisoning in over 60% of cases, and refusals were rare (arXiv 2508.14925). The attacks are real; this project cites that research rather than re-measuring it.
+- OWASP published the **Top 10 for Agentic Applications** (Dec 2025) and the **2026 Top 10 for LLM Applications** (Aug 2026).
+- Demand for AI Security Engineers grew 268% year over year (CyberSN via SecurityWeek, 2026).
 
 ## Target users
 
 | Persona | Need | How they use it |
 |---|---|---|
-| **Platform/AppSec engineer** (primary) | Roll out agents across the org without granting unlimited tool access | Deploys the gateway centrally, writes policies, reviews tool-change alerts |
-| **Developer using coding agents** | Use third-party MCP servers locally without being compromised | Runs the gateway locally as a wrapper around stdio servers |
-| **SOC / IR analyst** | Investigate what an agent did during an incident | Queries audit logs, consumes alerts in the SIEM |
-| **GRC / auditor** | Evidence that agent access is controlled and logged | Reads policy files and audit exports (feeds AI Compliance-as-Code) |
+| **Developer using agents** (primary) | Use third-party MCP servers without being compromised | Wraps stdio servers with `bulwark wrap` |
+| **Platform / AppSec engineer** | Guardrails on agent tool access | Writes policies; reviews tool-change alerts |
+| **IR analyst / auditor** | Know what an agent did; evidence of control | Verifies and reads the audit log |
+| **Portfolio reviewer** (hiring manager, engineer) | Judge the engineering quickly | Reads the README, runs the one-command demo, browses the design docs and tests |
 
 ## Vision (12 months)
 
-The default open-source way to put a security boundary around agent tool use. It ships with a policy library for common servers and a published benchmark showing attack success rates with and without the gateway. It integrates cleanly with SIEMs and identity providers.
+A small, well-engineered, well-documented open-source gateway that people can adopt in minutes. Each protection is demonstrated by an attack test anyone can run, and the design docs and decision records show how it was built.
 
 ## Goals
 
-- **G1 Drop-in.** Adoption requires changing one line of agent configuration, with no changes to agents or servers.
-- **G2 Tool integrity.** Detect tool poisoning in definitions and detect any definition change after approval (rug pull).
-- **G3 Least privilege.** Enforce allow/deny/ask decisions per tool call, including constraints on arguments, written as policy-as-code.
-- **G4 Break the trifecta.** Track untrusted and sensitive data through a session. Block or escalate egress-capable tool calls once a session is tainted.
-- **G5 Accountability.** Write a tamper-evident, SIEM-friendly audit record of every tool interaction.
-- **G6 Low overhead.** Add negligible latency on the fast path (see success metrics).
-- **G7 Proven effectiveness.** Publish a reproducible benchmark with malicious MCP servers and real agents.
+- **G1 Drop-in.** Adopting it is a one-line change to the agent's MCP configuration.
+- **G2 Tool integrity.** Detect tool poisoning and any definition change after approval.
+- **G3 Least privilege.** Allow or deny each tool call by policy-as-code, including argument constraints.
+- **G4 Accountability.** A tamper-evident audit record of every decision.
+- **G5 Proven by tests.** Every protection has an attack scenario in the suite. CI shows each attack succeeding without Bulwark and blocked with it.
+- **G6 Easy to evaluate.** A one-command demo, a clear README, and a release a reviewer can try in under 10 minutes.
 
 ## Non-goals
 
-- **NG1** Not a general LLM content filter or chat guardrail. It works only at the tool boundary.
-- **NG2** Does not claim to *prevent* prompt injection, which is an open problem. It **limits the damage** a hijacked agent can do.
-- **NG3** Not a full data loss prevention (DLP) product. Secret and PII detection is best-effort.
-- **NG4** Does not defend against a compromised agent host, or agents that bypass the gateway. Network controls handle bypass and are documented as a deployment requirement.
-- **NG5** Not an MCP server registry or marketplace.
+- **NG1** Does not solve prompt injection. Bulwark limits what a hijacked agent can do.
+- **NG2** Does not measure how often AI models fall for attacks. That's covered by published research (MCPTox, MCP-SafetyBench). An optional live-model mode may come later.
+- **NG3** Not a general LLM content filter, DLP product, or MCP server registry.
+- **NG4** No paid services, and nothing the maintainer must run or validate by hand.
+- **NG5** Does not defend against a compromised agent host or agents that bypass the gateway.
+
+## Constraints
+
+| Constraint | Effect on the design |
+|---|---|
+| **$0 budget** | Open-source dependencies only; GitHub Free plan; no paid APIs or hosted services. |
+| **Maintainer time: 1–2 hours/week** | Claude designs, builds, and tests. The maintainer reviews one PR per week. Each PR is reviewable in ≤ 30 minutes, with a plain-language summary and a "Decisions for you" list. |
+| **No manual testing** | All validation runs automatically in GitHub Actions. No local model runs or manual experiments. |
 
 ## Scope
 
-> **Build order is lab-first.** Attacks come before defenses. The attack lab and a baseline benchmark with no protection come first, and they become the project's first public write-up. The gateway is then built and measured against the same attacks. See DESIGN.md §12.
+> **Build order is attacks first** ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended by [ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)). Each attack scenario is written first as a test, then the gateway feature that blocks it is built. This is test-driven development applied to security.
 
 ### MVP (v0.1)
-- Proxying for **stdio** and **Streamable HTTP** MCP transports
-- Tool inventory with **fingerprinting and pinning**; CLI to review diffs and approve
-- **Static analyzers** for tool definitions: hidden Unicode, instruction-like text, references to other tools, sensitive paths, schema anomalies
-- **Policy engine** on `tools/call`: allow / deny / require-approval, with argument constraints
-- **Secret redaction** in tool arguments and results
-- **Audit log**: JSONL with a hash chain
-- **Attack lab**: deliberately malicious (but harmless) MCP servers for demos and tests
+- **Attack suite:** six harmless lab scenarios, a scripted replay client, a local canary sink, and a CI results table (scenario × with/without Bulwark)
+- **Gateway (stdio):** transparent proxy; tool fingerprinting and pinning (`learn` / `warn` / `enforce`); static analyzers; per-call policy with argument constraints; secret redaction; hash-chained audit log; CLI
+- **Detection corpora:** analyzer detection rate measured on poisoned tool descriptions from MCPTox (license permitting), and false positive rate on real servers' tool definitions
+- **One-command demo** and a signed release with an SBOM
 
 ### Later (v0.2+)
-- Session **taint tracking** and information-flow policies (G4)
-- ML **prompt-injection classifier** for tool results and descriptions
-- **Human-in-the-loop approval** broker
-- OpenTelemetry traces and OCSF-formatted export for SIEMs
-- Identity propagation through OAuth 2.1 (per-user and per-agent principals)
-- Policy library for popular servers; web dashboard
-- Public benchmark report; Kubernetes/Helm deployment
-
-## Key capabilities
-
-1. **Pin and diff.** A hash of every tool definition is recorded at approval. Any change quarantines the tool and shows a readable diff.
-2. **Inspect.** Layered detectors score definitions and results. Scores feed into policy decisions rather than acting as a black-box block.
-3. **Decide.** Policy-as-code (Cedar or OPA, decided by ADR) evaluates *who* is calling *which tool* with *which arguments*, given the session's *taint state*.
-4. **Contain.** Egress-capable tools are restricted once a session has seen both sensitive data and untrusted content.
-5. **Record.** A tamper-evident log of every decision, with the reasons and policy IDs behind it.
+Streamable HTTP transport · multi-server aggregation · session taint tracking · human approval · ML injection classifier (CPU, runs in CI) · OpenTelemetry/OCSF export · optional "bring your own model" live benchmark
 
 ## Prior art and differentiation
 
-| Existing tool / approach | What it does well | Gap this project fills |
+| Category | Examples | Gap MCP Bulwark fills |
 |---|---|---|
-| Static MCP scanners (for example Invariant's MCP-Scan, now part of Snyk; `mcpscan`) | Install-time detection of poisoned descriptions; tool pinning | Do not enforce policy on each call at runtime or track information flow; limited audit |
-| LLM guardrails (for example Llama Guard / Prompt Guard models, NeMo Guardrails) | Classify prompts and responses | Not aware of MCP semantics; no per-tool authorization or pinning |
-| Commercial / vendor MCP gateways (for example Docker MCP Gateway) | Server lifecycle, isolation, catalogs | `VERIFY:` survey their security features. Expected gap: open, policy-as-code, taint-aware enforcement with a public benchmark |
-| API gateways / WAFs | Mature traffic control | Do not understand JSON-RPC/MCP or model-facing content |
-| Research: CaMeL (Google DeepMind, 2025), "lethal trifecta" | Principled information-flow defenses | Research prototypes; this project brings a practical, simplified version to a deployable gateway |
+| Open-source MCP security gateways (2026) | MCPKernel, McpVanguard, OpenGate, Arbitus, mcp-bastion, taintmcp, mcpgate | Claims are rarely backed by a public, reproducible attack suite. **Bulwark proves each protection in CI.** |
+| Vendor / platform gateways | Docker MCP Gateway, IBM ContextForge, Pomerium | Operations and access focus; heavier to adopt |
+| Static scanners | MCP-Scan (now part of Snyk), mcpscan | Install-time only; no runtime enforcement or audit |
+| LLM guardrails | Prompt-injection classifier models, NeMo Guardrails | Not MCP-aware; no per-tool authorization |
+| Academic benchmarks | MCPTox (AAAI), MCP-SafetyBench | Measure models, not a deployable defense. **Bulwark reuses MCPTox's poisoned tools as detection test data.** |
 
-> Before the design is frozen, do a fresh prior-art survey (search GitHub and vendor sites for "MCP gateway", "MCP proxy", and "MCP firewall") and update this table.
+> `VERIFY:` the features and licenses of each listed project before any public comparison. This list comes from a November 2026 search.
+
+**Being honest about the field:** many gateways exist. This project stands out through **engineering quality and evidence** (a threat model of the gateway itself, decision records, an attack suite in CI, signed releases), not novelty alone.
 
 ## Success metrics
 
-| Metric | Target (initial; refine in design) | How measured |
+| Metric | Target | How measured |
 |---|---|---|
-| Attack success rate (ASR) reduction | ≥ 80% relative reduction across the lab scenarios | Benchmark harness with a real agent, with and without the gateway |
-| Poisoning detector recall / false positive rate | ≥ 90% recall on lab corpus; ≤ 2% FPR on a benign corpus of popular real servers | Analyzer test suite |
-| Rug-pull detection | 100% of definition changes detected | Lab scenario tests |
-| Latency overhead (excluding upstream and ML classifier) | p95 < 5 ms per message | Load test |
-| Time to adopt | < 10 minutes from install to first protected session | Documented quickstart, timed |
+| Attack suite | 100% of scenarios succeed without Bulwark and are blocked or detected with it in `enforce` mode | CI on every PR |
+| Poisoning detection | ≥ 90% of the MCPTox poisoned-tool subset flagged | Analyzer corpus test in CI |
+| False positives | ≤ 2% of benign real-server tool definitions flagged | Analyzer corpus test in CI |
+| Rug-pull detection | 100% of definition changes detected | Scenario L-02 |
+| Latency overhead | p95 < 5 ms per message | Benchmark test in CI |
+| Time to evaluate | Clone to demo output in ≤ 10 minutes | Documented quickstart |
+| Cost | $0 | No paid service in any workflow |
 
 ## What this project demonstrates
 
-| Area | Evidence in this project |
+| Area | Evidence |
 |---|---|
-| Security depth | Threat modeling of a new protocol, OWASP Agentic/LLM mapping, information-flow control, tamper-evident logging, red-team lab |
-| AI/ML engineering | Prompt-injection classification, evaluation with recall/FPR/ASR, understanding how agents fail |
-| Software engineering | High-performance protocol proxy, policy engine integration, plugin architecture, load testing, single-binary distribution |
-| Engineering leadership | Phased roadmap, ADRs, explicit non-goals, public benchmark methodology, contributor-ready repo |
+| Security depth | Attack scenarios mapped to OWASP Agentic/LLM risks and MITRE ATLAS; threat model of the gateway itself; coordinated-disclosure policy |
+| AI security | Understanding of agent attack surfaces (tool poisoning, rug pulls, exfiltration); defenses that don't depend on the model behaving well |
+| Software engineering | Protocol proxy, policy-as-code, test-driven security, CI/CD, signed releases with SBOM |
+| Engineering leadership | Scoping in a crowded field, explicit constraints, ADRs, phased roadmap, PR-based review workflow |
 
-## Risks and open questions
+## Risks
 
-- **R1** The MCP spec changes quickly (transports, auth, new methods). *Mitigation:* pin a spec revision and keep protocol handling behind an adapter layer.
-- **R2** False positives in detectors cause alert fatigue. *Mitigation:* scores feed policy; modes are `learn` / `warn` / `enforce`.
-- **R3** Human approval can itself be exploited (approval fatigue, misleading approval prompts). *Mitigation:* rate limits, clear diffs, approve by policy rather than by individual call.
-- **Q1** Go or Python for the core? (Go suits a fast single-binary proxy; Python has the ML ecosystem.) Possibly a Go core with a Python classifier sidecar.
-- **Q2** Cedar or OPA/Rego for policy?
-- **Q3** How should the calling principal be identified over stdio, where there is no auth layer?
-- **Q4** How should server-initiated requests (sampling, elicitation) be handled? Are they in scope for the MVP?
-- **Q5** Which classifier: a small open model run locally, an LLM-as-judge, or both in tiers?
+- **R1 The MCP spec changes quickly.** *Mitigation:* pin a spec revision; protocol handling behind an adapter layer.
+- **R2 Crowded field.** *Mitigation:* compete on evidence and quality, keep scope small, and acknowledge prior art openly.
+- **R3 Scripted attacks don't show how real models behave.** *Mitigation:* the suite tests what Bulwark controls (what reaches the model and which calls go through), and cites published research for model behavior. A live-model mode is a later option.
+- **R4 Low maintainer time.** *Mitigation:* Claude drafts and builds; small PRs; decisions default to Claude's recommendation unless changed.
+
+## Questions
+
+| # | Question | Status |
+|---|---|---|
+| Q-A | Positioning | **Resolved:** gateway with a built-in attack suite ([ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)) |
+| Q-B | v0.1 transports | **Resolved:** stdio only; Streamable HTTP in v0.2 |
+| Q-C | Reuse public benchmarks? | **Resolved:** yes, MCPTox poisoned tools as analyzer test data (license permitting) |
+| Q-D | Budget and testing | **Resolved:** $0; all testing automated in CI |
+| Q1 | Core language | Open (design 02, ADR) |
+| Q2 | Policy engine (Cedar vs. OPA) | Open (design 02, ADR) |
+| Q3 | Handling of sampling/elicitation | **Resolved:** passed through and audited in v0.1 |
 
 ## Maintainer notes
 
-<!-- Add your own experience, opinions, and edits here. For example: real-world agent rollouts you've seen, which attacks matter most to enterprises, how you would pitch this to a CISO. -->
+- Time available: 1–2 hours/week. Work arrives as PRs to review.
+- Constraints: keep everything free; no manual testing or model runs.
+- Purpose: a portfolio-quality project for potential employers.

@@ -10,6 +10,11 @@ MCP Bulwark moves through five stages. Each stage produces a specific artifact a
 | 3. Build | Code, tests, docs | Claude + Maintainer review | All tasks done, CI green, acceptance criteria demonstrated |
 | 4. Release | Public repo + tagged release | Maintainer | Repo made public with README demo, signed release, published threat model, and launch write-up |
 
+
+## Working agreement
+
+The maintainer has 1–2 hours per week, so the prompts below are adapted rather than followed literally. **Claude drafts with its recommendations applied and opens a pull request. The maintainer reviews it.** Each PR starts with a plain-language summary, a "Decisions for you" list (each decision stands unless changed), and a "Needs your input" list for things only the maintainer can decide. The full agreement is in [CLAUDE.md](../CLAUDE.md#working-agreement-the-maintainer-has-12-hours-per-week).
+
 ---
 
 ## Stage 0: Idea

@@ -1,9 +1,21 @@
 # Instructions for Claude: MCP Bulwark
 
-A security gateway for MCP. It acts as a server to agents and as a client to upstream servers. It pins and inspects tool definitions, enforces policy-as-code on tool calls, tracks session taint to contain exfiltration, and writes hash-chained audit logs. The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
+A security gateway for AI agents: an MCP proxy that pins and inspects tool definitions, enforces policy-as-code on tool calls, redacts secrets, and writes hash-chained audit logs. It ships with a deterministic **attack suite** (harmless lab servers + a scripted replay client) that proves every protection in CI ([ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)). The process is described in `docs/WORKFLOW.md`: **Idea → Design → Specs → Build → Release**.
+
+**Purpose: a portfolio project for potential employers.** Optimize for shipped, tested, well-documented software that a reviewer can evaluate in 10 minutes, not for research.
 
 ## Current stage
-**Stage 0 → 1.** `IDEA.md` is in its final stress test, then design work begins at `DESIGN.md` §1–§2. **No implementation code yet.** The roadmap is lab-first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md)), so the first specs are 001 (attack lab) and 002 (benchmark harness).
+**Stage 1: Design.** `IDEA.md` is `Ready for design`. `DESIGN.md` §1–§3 are drafted. Next: §4 architecture (add the attack suite components), §7 threat model, and the language and policy-engine ADRs. **No implementation code yet.** The roadmap is attacks first ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended), so the first specs are 001–004 (attack suite, replay client, proxy, audit log).
+
+## Working agreement (the maintainer has 1–2 hours per week)
+- **Claude drafts; the maintainer decides.** Don't wait on questions. Draft complete sections, specs, or code with your recommended answers applied. Each decision stands unless the maintainer changes it in review.
+- **Everything arrives as a pull request** on a branch, never pushed straight to `main`. Each PR must be reviewable in ≤ 30 minutes and start with:
+  1. a plain-language summary of a few sentences (no jargon without explanation)
+  2. **"Decisions for you"**: a short list of each decision made, the recommendation applied, and the alternative
+  3. **"Needs your input"**: only things Claude genuinely cannot decide (money, publishing, direction, disclosure, facts about the maintainer's environment)
+- **Keep everything free ($0).** No paid APIs, hosted services, or paid GitHub features.
+- **No manual testing by the maintainer.** Every requirement must be verifiable by an automated test in GitHub Actions. Never design work that requires the maintainer to run models, experiments, or local tests. v0.1 needs no AI model at all.
+- **Always the maintainer's call:** spending money, making the repo public, publishing write-ups, contacting other projects' maintainers, and disclosing vulnerabilities.
 
 ## Hard rules
 
@@ -20,7 +32,7 @@ A security gateway for MCP. It acts as a server to agents and as a client to ups
 - **Keep three things separate:** threats MCP Bulwark *mitigates* (DESIGN.md §7.3), threats *to* MCP Bulwark (§7.4), and accepted risks.
 
 ## How to collaborate on the design
-- **Work one section at a time.** Before filling a section, read `IDEA.md`, the related sections, and the ADRs in `docs/adr/`. Then ask the maintainer the section's "Questions to resolve", up to about 5 at a time, each with your recommended answer, before writing.
+- **Work one or two sections per PR.** Before drafting, read `IDEA.md`, the related sections, and the ADRs in `docs/adr/`. Resolve each section's "Questions to resolve" with your recommendation and list them under "Decisions for you" in the PR.
 - **Make recommendations.** State the options briefly, recommend one, and explain why. Record each resolved choice in the DESIGN.md §14 Decision Log, and write a full ADR (`templates/ADR_TEMPLATE.md`) for significant ones.
 - **Write testable requirements.** Number them (`FR-001`, `NFR-001`) and make each one verifiable. Specs trace back to these IDs.
 - **Cite standards precisely:** name, version, and section or ID (for example "OWASP Top 10 for LLM Applications 2026, LLM01").
