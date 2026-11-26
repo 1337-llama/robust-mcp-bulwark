@@ -3,8 +3,8 @@
 ## Document control
 | Field | Value |
 |---|---|
-| Status | Draft: §1–§3 drafted and in review (✅); other sections seeded (🌱) or not yet written (📝) |
-| Version | 0.5 |
+| Status | Draft: §1–§4 and §7 drafted (✅); §5–§6 seed notes, revised in design 03; others seeded (🌱) or not yet written (📝) |
+| Version | 0.6 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -17,6 +17,7 @@
 | 0.3 | 2026-11-26 | Moved to standalone repository; renamed to MCP Bulwark (CLI `bulwark`); decision 1 recorded as ADR-0001 |
 | 0.4 | 2026-11-26 | (Superseded before merge) Evaluation-first draft with live-model benchmark |
 | 0.5 | 2026-11-26 | Gateway with deterministic attack suite (ADR-0002, amends ADR-0001). Drafted §1–§3; renumbered FR/NFR; stdio-only v0.1; $0 and no-manual-testing constraints; updated §10, §12, §14, §15 |
+| 0.6 | 2026-11-26 | Design 02: §4 architecture (v0.1 stdio, attack suite components, verify-before-call), §7 threat model (STRIDE, mitigations mapping, accepted risks); ADR-0003 Go, ADR-0004 OPA; MCP baseline 2026-07-28; FR-028…032, NFR-013…015; file-based sink |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -62,7 +63,7 @@ flowchart LR
 | Session-level defenses | Per-call policy only | Taint tracking (v0.2) |
 
 ### 1.3 Target protocol revision
-`VERIFY:` the latest MCP specification revision at design time. Revision `2025-11-25` is the most recent known to the drafter. v0.1 pins one revision. If client and server propose different `protocolVersion` values in `initialize`, the gateway forwards the negotiation unchanged and records both values in the audit log.
+v0.1 targets MCP specification revision **2026-07-28**, the latest at the time of drafting, supported by the official Go SDK v1.7.0 (ADR-0003). If client and server negotiate a different `protocolVersion`, the gateway forwards the negotiation unchanged and records the version in the audit log. Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines. `VERIFY:` 2026-07-28 changes that affect stdio (version-selection request, logging deprecation) when writing spec 003.
 
 ### 1.4 Glossary
 | Term | Definition |
@@ -77,7 +78,7 @@ flowchart LR
 | Replay client | A scripted MCP client that sends the messages a hijacked agent would send. No AI model involved |
 | Condition | How the replay client reaches the lab server: `none` (direct), `bulwark-warn`, or `bulwark-enforce` |
 | Canary | A fake secret planted in the lab. If it reaches the sink, data was exfiltrated |
-| Sink | A loopback-only listener that records canaries |
+| Sink | The **observation log**: a local file where lab servers record tool calls and "exfiltrated" canaries. No network involved (§4.2) |
 | Observables | What each scenario checks: `poison_delivered` (malicious text reached the client), `forbidden_call_executed` (the upstream server ran a call it shouldn't have), `canary_exfiltrated` (a canary reached the sink) |
 | Detection corpus | A set of tool definitions (poisoned or benign) used to measure analyzer detection and false-positive rates |
 
@@ -93,12 +94,13 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | ID | Requirement | Priority | Source |
 |---|---|---|---|
 | FR-001 | The suite shall provide scenarios L-01…L-06 (§10.3) as stdio MCP servers in `lab/`. Each has a manifest declaring ID, technique, OWASP/ATLAS mapping, replay script, and expected observables per condition. | MVP | G5 |
-| FR-002 | Lab servers shall use canary secrets only, send data only to the loopback sink, and make no other network connections. | MVP | G5 |
+| FR-002 | Lab servers shall use canary secrets only, record "exfiltration" only to the local observation log, and make no network connections at all. | MVP | G5 |
 | FR-003 | The replay client shall execute a scenario's replay script (`initialize`, `tools/list`, `tools/call` with given arguments, waits for notifications) and record every message sent and received. | MVP | G5 |
 | FR-004 | For each scenario, the suite shall assert the expected observables under each condition. At minimum, the attack must **succeed under `none`**, proving the scenario is real, and be **blocked or detected under `bulwark-enforce`**. | MVP | G5 |
 | FR-005 | CI shall run the suite on every PR and publish a results table (scenario × condition) in the job summary. A failing assertion fails the build. | MVP | G5 |
 | FR-006 | An analyzer corpus test shall report detection rate on poisoned tool definitions (MCPTox subset, if its license permits; `VERIFY:` license and format) and false-positive rate on benign tool definitions from real open-source MCP servers. | MVP | G2, G5 |
 | FR-007 | A one-command demo (`make demo` or a container image) shall run selected scenarios with and without Bulwark and print the results table, with no setup beyond Docker or the release binary. | MVP | G6 |
+| FR-032 | The `bulwark-lab` binary shall refuse to start unless `BULWARK_LAB=1` is set, and shall print a `LAB ONLY` banner to stderr on start. | MVP | G5 (T-L2) |
 
 **Bulwark Gateway (v0.1, stdio)**
 | ID | Requirement | Priority | Source |
@@ -111,6 +113,10 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | FR-025 | Gateway shall detect secrets in tool arguments and results (pattern and entropy based) and redact them according to configuration. | MVP | G3 |
 | FR-026 | Gateway shall write an audit record for every decision, chained with SHA-256 hashes so that any modification or deletion is detectable. | MVP | G4 |
 | FR-027 | The CLI shall support: `wrap`, `tools list/diff/approve/reject`, `policy test`, and `audit verify/tail`. | MVP | G1–G4 |
+| FR-028 | Gateway shall parse every message strictly: reject duplicate object keys, invalid UTF-8, and messages over the size or depth limits. It shall forward the **re-serialized form it inspected**, never the original bytes. | MVP | G2 (T-01) |
+| FR-029 | Every CLI output that includes untrusted text (tool definitions, diffs, prompts, audit fields) shall neutralize control characters, ANSI escapes, and bidi controls. | MVP | G2 (T-11) |
+| FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's current definition matches its approved pin, re-fetching `tools/list` itself when the last check is older than `pin_recheck_interval` (default: every call). | MVP | G2 (T-06, rug pull) |
+| FR-031 | Gateway shall track request IDs per direction, use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
 
 **Later (v0.2+)**
 | ID | Requirement | Priority |
@@ -138,6 +144,9 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | NFR-010 | Portability | Linux and macOS supported; Windows best-effort | CI matrix |
 | NFR-011 | Usability | A reviewer goes from clone (or release download) to demo output in ≤ 10 minutes | Documented quickstart, scripted in CI |
 | NFR-012 | Supply chain | Releases are built in CI with an SBOM and signatures (Sigstore) | Release workflow |
+| NFR-013 | Resource limits | Configurable maximum message size (default 4 MiB), JSON nesting depth (default 64), outstanding requests, and notification rate. Exceeding a limit produces an error and an audit record, not a crash | Fuzz and limit tests in CI |
+| NFR-014 | Attack surface | v0.1 Gateway opens no network listeners and makes no network connections | Network-disabled CI run + code review checklist |
+| NFR-015 | Dependency hygiene | Dependencies pinned (`go.sum`); `govulncheck` and dependency review run in CI; no known-vulnerable dependency at release | CI job |
 
 ### 2.3 Constraints and assumptions
 | ID | Type | Statement |
@@ -147,7 +156,7 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | C-3 | Constraint | No manual testing or local model runs (NFR-002). |
 | C-4 | Constraint | The repo is private until the v0.1 launch. GitHub Actions minutes for private repos on the Free plan are limited (`VERIFY:` current allowance; 2,000 minutes/month at time of drafting). At ≤ 10 minutes per run (NFR-009) this allows about 200 runs per month. |
 | A-1 | Assumption | Protocol-level replay is a faithful test of Bulwark's controls, because Bulwark acts only on protocol messages. It does **not** show how often a model would follow the malicious instructions. The docs cite published research for that (R3 in IDEA.md). |
-| A-2 | Assumption | Official MCP SDKs are mature enough to build both the gateway and the lab servers (`VERIFY:` SDK for the language chosen in design 02). |
+| A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the lab servers and replay client. The gateway parses JSON-RPC itself (ADR-0003). |
 
 ---
 
@@ -172,114 +181,158 @@ See [IDEA.md](IDEA.md#target-users). The primary persona for v0.1 is the **devel
 
 ---
 
-## 4. Architecture 🌱
+## 4. Architecture ✅ (drafted v0.6, in review)
 
-> **Pending revision (next design PR):** add the attack suite components (replay client, lab servers, sink, CI results) shown in §1.1, and reduce Gateway to one upstream server for v0.1 (§1.2). The diagrams below still show the full multi-server Gateway.
+v0.1 architecture: one Bulwark process per wrapped stdio server, written in Go ([ADR-0003](docs/adr/0003-implementation-language.md)), with policies in OPA/Rego ([ADR-0004](docs/adr/0004-policy-engine.md)). It opens **no network listeners** and makes **no network connections** (NFR-014).
 
 ### 4.1 System context
 
 ```mermaid
 flowchart LR
-  subgraph Host["Agent host (trust boundary TB1)"]
-    A["AI agent + MCP client"]
+  subgraph Host["Agent host (TB1)"]
+    C["MCP client<br/>(IDE, desktop app, agent)"]
   end
-  subgraph GW["MCP Bulwark (TB2)"]
-    direction TB
-    T["Transport adapters<br/>stdio · Streamable HTTP"]
-    S["Session manager"]
-    R["Tool registry<br/>& pinning"]
-    I["Inspection pipeline"]
-    P["Policy engine"]
-    F["Taint tracker"]
-    H["Approval broker"]
-    L["Audit logger"]
+  subgraph BW["bulwark wrap -- &lt;cmd&gt; (TB2)"]
+    FE["Client side<br/>stdin / stdout"]
+    PL["Message pipeline<br/>parse → intercept → re-serialize"]
+    BE["Upstream side<br/>child process pipes"]
   end
-  subgraph Up["Upstream MCP servers (untrusted, TB3)"]
-    U1["filesystem (stdio)"]
-    U2["email (HTTP)"]
-    U3["web fetch (HTTP)"]
+  subgraph Up["Upstream MCP server (untrusted, TB3)"]
+    S["child process<br/>(optionally inside a container)"]
   end
-  Human(["Approver"])
-  SIEM[("SIEM / log store")]
-  A <--> T
-  T <--> S
-  S --- R
-  S --- I
-  S --- P
-  S --- F
-  P --> H
-  H <--> Human
-  S --> L --> SIEM
-  S <--> U1
-  S <--> U2
-  S <--> U3
+  subgraph St["Local state (TB4)"]
+    CF["config.yaml"]
+    PN["pins.json"]
+    PO["policies/*.rego"]
+    AU["audit.jsonl"]
+  end
+  OP(["Operator"])
+  C <-->|"JSON-RPC over stdio"| FE
+  FE <--> PL <--> BE
+  BE <-->|"stdin/stdout<br/>(stderr passed through)"| S
+  PL --- CF
+  PL --- PN
+  PL --- PO
+  PL --> AU
+  OP -->|"bulwark tools / audit / policy<br/>(+ /dev/tty prompt)"| St
 ```
 
-### 4.2 Component overview
-| Component | Responsibility |
-|---|---|
-| Transport adapters | Terminate the client connection and connect to upstreams. Framing for stdio (newline-delimited JSON-RPC) and Streamable HTTP (POST + optional SSE stream, session header). |
-| Session manager | Tracks each client session: principal, upstream connections, request ID mapping, taint state. Routes messages through the pipeline. |
-| Tool registry & pinning | Canonicalizes and fingerprints definitions, stores approved pins, computes diffs, filters and namespaces the tool list shown to the client. |
-| Inspection pipeline | Ordered analyzers (static rules, secret detection, ML classifier) that produce `Finding`s with scores. |
-| Policy engine | Evaluates the decision input (principal, tool, args, findings, taint) to produce `allow` / `deny` / `ask` / `redact`, along with the matching policy IDs. |
-| Taint tracker | Applies labels from tool classifications and findings. Exposes session state to policy. |
-| Approval broker | Delivers `ask` decisions to a human (CLI prompt, webhook, or MCP elicitation). Enforces timeouts and the default decision. |
-| Audit logger | Writes structured, hash-chained records. Optional exporters for OTel and OCSF. |
-| CLI / admin API | Inventory, diff/approve, policy test, audit verify, config validation. |
+The MCP client launches `bulwark wrap -- <server command>` instead of the server. Bulwark starts the real server as a child process and sits on both pipes. To the client it is a server, and to the server it is a client.
 
-### 4.3 Key flows
+### 4.2 Components
+
+**Gateway (`bulwark`)**
+| Package | Responsibility | Key requirements |
+|---|---|---|
+| `cmd/bulwark` | CLI entry point: `wrap`, `tools`, `policy`, `audit` | FR-027 |
+| `internal/jsonrpc` | Strict framing and parsing of newline-delimited JSON-RPC: size limits, duplicate-key rejection, UTF-8 validation, canonical re-serialization | FR-028, NFR-013 |
+| `internal/proxy` | Owns both pipes and the child process lifecycle. Tracks request IDs per direction, routes messages through the pipeline, issues gateway-originated requests in a reserved ID space | FR-020, FR-030, FR-031 |
+| `internal/pipeline` | Ordered interceptors keyed by (direction, method). Each returns *forward*, *modify*, or *block with error* | FR-020…025 |
+| `internal/registry` | JCS canonicalization, fingerprints, pin store (JSON file), `learn`/`warn`/`enforce` modes, diffs | FR-021, FR-030 |
+| `internal/analyzers` | Analyzer interface, text normalization helpers, the first four analyzers | FR-022 |
+| `internal/policy` | Embedded OPA: decision-input builder (including derived attributes such as cleaned paths and URL hosts), prepared queries, decision combining | FR-023, FR-024, NFR-005 |
+| `internal/redact` | Secret detectors (patterns + entropy) for arguments and results | FR-025 |
+| `internal/audit` | Hash-chained JSONL writer, `verify`, `tail` | FR-026, NFR-006 |
+| `internal/config` | YAML configuration with JSON Schema validation | — |
+| `internal/termsafe` | Neutralizes untrusted text (control characters, ANSI escapes, bidi controls) before printing it to a terminal | FR-029 |
+
+**Attack suite (`lab/`)**
+| Package | Responsibility | Key requirements |
+|---|---|---|
+| `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-06 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-032 |
+| `lab/scenarios/*.yaml` | Scenario manifests: technique, mappings, replay script, expected observables per condition | FR-001, FR-004 |
+| `lab/replay` | Replay client: an MCP client (Go SDK) that executes a replay script and records the transcript | FR-003 |
+| `lab/suite` | Go tests: for each scenario × condition, start the stack, replay, read the observation log, assert | FR-004, NFR-008 |
+| `tools/ci-summary` | Renders suite results (JSON) as a Markdown table for the GitHub Actions job summary and the README | FR-005 |
+
+**Sink design:** lab servers never use the network. Their "exfiltration" tools append to an **observation log** file given by `BULWARK_LAB_OBS`, which the suite reads to compute observables. This is safer than a loopback listener and lets the suite run with networking fully disabled (NFR-003).
+
+### 4.3 Repository layout (v0.1)
+```
+cmd/bulwark/            CLI
+internal/               gateway packages (§4.2)
+lab/                    LAB ONLY: attack servers, scenarios, replay client, suite
+  cmd/bulwark-lab/
+  scenarios/
+  replay/
+  suite/
+testdata/corpora/       detection corpora (MCPTox subset, benign definitions)
+policies/examples/      example Rego policies + their tests
+tools/ci-summary/
+docs/                   ADRs, workflow, write-ups
+.github/workflows/      CI: test, suite, lint, vuln scan, release
+```
+
+### 4.4 Key flows
 
 **Tool discovery (`tools/list`)**
-
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant G as Gateway
+  participant B as Bulwark
   participant U as Upstream
-  C->>G: tools/list
-  G->>U: tools/list
-  U-->>G: tool definitions
-  G->>G: canonicalize (JCS) → SHA-256 fingerprint
-  G->>G: compare with pins → new / unchanged / changed
-  G->>G: static analyzers → findings
-  G->>G: policy: is the tool visible to this principal?
-  G->>G: audit(discovery, findings, pin status)
-  G-->>C: filtered, namespaced tool list
+  C->>B: tools/list (id 7)
+  B->>U: tools/list (id 7)
+  U-->>B: result: tool definitions (+ nextCursor)
+  B->>B: strict parse, canonicalize (JCS), fingerprint
+  B->>B: compare with pins: new / unchanged / changed
+  B->>B: run analyzers, record findings
+  B->>B: apply mode: learn / warn / enforce (hide unapproved tools)
+  B->>B: audit(discovery, findings, pin status)
+  B-->>C: re-serialized, filtered result (id 7)
 ```
+Paginated results (`nextCursor`) are handled page by page. `notifications/tools/list_changed` from upstream is forwarded to the client and invalidates the gateway's cached view, so the next `tools/list` is re-checked.
 
 **Tool invocation (`tools/call`)**
-
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant G as Gateway
+  participant B as Bulwark
   participant U as Upstream
-  C->>G: tools/call {name, arguments}
-  G->>G: resolve namespace → upstream + tool, check pin is approved
-  G->>G: inspect args (secrets, patterns)
-  G->>G: policy(principal, tool, args, findings, taint)
-  alt deny
-    G-->>C: error result (reason, policy id)
-  else ask
-    G->>G: approval broker (timeout → default)
+  C->>B: tools/call {name, arguments} (id 9)
+  opt enforce mode and pin check is stale
+    B->>U: tools/list (id "bulwark-1", gateway-originated)
+    U-->>B: definitions (consumed, not forwarded)
+    B->>B: re-verify fingerprint of the called tool
   end
-  G->>U: tools/call (possibly redacted args)
-  U-->>G: result
-  G->>G: inspect result (secrets, injection score)
-  G->>G: update taint labels
-  G->>G: audit(call, decision, taint before/after)
-  G-->>C: result (possibly redacted or annotated)
+  B->>B: tool approved? (else deny)
+  B->>B: secret scan on arguments → redact / finding
+  B->>B: policy(tool, arguments, derived attributes, findings)
+  alt deny
+    B-->>C: error result with policy ID (id 9)
+  else allow
+    B->>U: tools/call, re-serialized, possibly redacted (id 9)
+    U-->>B: result
+    B->>B: secret scan on result → redact
+    B-->>C: result (id 9)
+  end
+  B->>B: audit(call, decision, policy IDs, latency)
+```
+**Verify before call (FR-030):** in `enforce` mode, the gateway re-checks the called tool's definition with its own `tools/list` when the last check is older than `pin_recheck_interval` (default: before every call). This catches a rug pull even when the server sends no `list_changed` notification and the client never re-lists. The cost is one extra local round trip per call. It can be relaxed in configuration.
+
+**Attack suite run (CI)**
+```mermaid
+sequenceDiagram
+  participant T as Suite test
+  participant R as Replay client
+  participant B as Bulwark (or none)
+  participant L as bulwark-lab Lxx
+  participant O as Observation log
+  T->>T: fresh temp dir, BULWARK_LAB=1, BULWARK_LAB_OBS=path
+  T->>R: start with condition (none / bulwark-warn / bulwark-enforce)
+  R->>B: initialize, tools/list, tools/call… (replay script)
+  B->>L: (forwarded or blocked)
+  L->>O: record calls and "exfiltrated" canaries
+  R-->>T: transcript (messages received)
+  T->>O: read observations
+  T->>T: compute observables, assert expectations, emit results JSON
 ```
 
-**Questions to resolve**
-1. Aggregating proxy (one gateway, many servers) or one gateway process per server? (Recommendation: aggregating, which gives one place for policy and shared taint state across servers.)
-2. On a deny, should the gateway return a JSON-RPC error or a tool result with `isError: true`? (Affects how agents recover. Test with real clients.)
-3. Where is state stored (pins, approvals): local file, SQLite, or Postgres in central mode?
+**Decided in this draft** (§14.1): one process per server (no aggregation in v0.1), file-based sink, verify-before-call by default. **Deferred to design 03:** whether a deny is returned as a JSON-RPC error or as a tool result with `isError: true`.
 
----
+## 5. Detailed design 📝 (seed notes; revised in design 03)
 
-## 5. Detailed design 📝 (seed notes)
+> Seed notes below predate design 02. Where they conflict with §4 (for example multi-server aggregation or session taint in v0.1), §4 wins.
 
 ### 5.1 Tool registry and pinning
 - Canonicalization: RFC 8785 JCS over `{server_id, name, title, description, inputSchema, outputSchema, annotations}`. Decide whether `annotations` count toward the fingerprint (recommendation: yes; any change is security-relevant).
@@ -300,32 +353,44 @@ sequenceDiagram
 | `size.anomaly` | Unusually long descriptions | |
 
 ### 5.3 Policy engine
-Decision input (draft):
+OPA/Rego, embedded ([ADR-0004](docs/adr/0004-policy-engine.md)). Decision input (v0.1 draft):
 
 ```json
 {
-  "principal": {"id": "agent:code-assistant", "user": "user:alice@example.com", "groups": ["eng"]},
-  "server": {"id": "web", "trust": "external"},
-  "tool": {"name": "fetch", "capabilities": ["egress", "read_external"], "pin_status": "approved"},
-  "arguments": {"url": "https://example.com/page"},
-  "findings": [{"analyzer": "secrets", "severity": "high"}],
-  "session": {"taint": ["sensitive_data"], "call_count": 14},
-  "mode": "enforce"
+  "tool": {"name": "http_post", "pin_status": "approved", "annotations": {"readOnlyHint": false}},
+  "arguments": {"url": "https://api.example.com/v1/upload", "body": "…"},
+  "derived": {"url_scheme": "https", "url_host": "api.example.com", "path_clean": null, "args_bytes": 812},
+  "findings": [{"analyzer": "secrets", "severity": "high", "location": "arguments.body"}],
+  "mode": "enforce",
+  "server": {"command_digest": "sha256:…"}
 }
 ```
 
-Example Cedar policy (if Cedar is chosen; ADR pending):
+Example policy. The gateway combines the sets: any `deny` → deny; else any `ask` → ask; else any `allow` → allow; else deny.
 
-```cedar
-// Break the lethal trifecta: once a session holds sensitive data AND has
-// seen untrusted content, egress-capable tools require human approval.
-forbid (principal, action == Action::"call_tool", resource)
-when {
-  resource.capabilities.contains("egress") &&
-  context.session.taint.contains("sensitive_data") &&
-  context.session.taint.contains("untrusted_content")
+```rego
+package bulwark.authz
+
+import rego.v1
+
+# Reads only inside the workspace (path_clean is computed by the gateway).
+allow contains "fs-read-workspace" if {
+	input.tool.name == "read_file"
+	startswith(input.derived.path_clean, "/workspace/")
 }
-unless { context.approval == "granted" };
+
+# Outbound HTTP only to approved hosts.
+allow contains "http-allowlist" if {
+	input.tool.name == "http_post"
+	input.derived.url_host in {"api.example.com"}
+}
+
+# Never send anything that looks like a secret.
+deny contains "no-secrets-out" if {
+	some f in input.findings
+	f.analyzer == "secrets"
+	startswith(f.location, "arguments")
+}
 ```
 
 ### 5.4 Taint tracker (v0.2)
@@ -351,7 +416,9 @@ See §6.3 for the record schema. Hash chain: `hash = SHA-256(prev_hash || canoni
 
 ---
 
-## 6. Interfaces and data model 🌱
+## 6. Interfaces and data model 🌱 (revised in design 03)
+
+> The configuration example below predates design 02. v0.1 configures **one upstream per `bulwark wrap` invocation**; the multi-server form is for v0.2.
 
 ### 6.1 CLI (draft)
 ```
@@ -383,7 +450,7 @@ pinning:
   mode: enforce            # learn | warn | enforce
   store: ./state/pins.db
 policy:
-  engine: cedar            # ADR pending: cedar | opa
+  engine: opa              # ADR-0004
   path: ./policies/
   on_engine_error: deny    # fail-closed
 inspection:
@@ -425,46 +492,90 @@ audit:
 
 ---
 
-## 7. Security and threat model 🌱
+## 7. Security and threat model ✅ (drafted v0.6, in review)
+
+Scope: v0.1 (stdio, one upstream per process, no network). Method: data-flow diagram + STRIDE per trust boundary, plus attacker-driven abuse cases. Threats Bulwark **mitigates** (§7.3), threats **to** Bulwark (§7.4–7.5), and **accepted risks** (§7.6) are kept separate.
 
 ### 7.1 Assets
-Upstream credentials · policy and pin store · audit log integrity · user data passing through · the availability of agents' tool access.
+| ID | Asset | Why it matters |
+|---|---|---|
+| A-1 | Data reachable through tools (files, mail, tokens) | The thing attackers want to exfiltrate |
+| A-2 | Integrity of what reaches the model (tool definitions, results) | Poisoned context hijacks the agent |
+| A-3 | Policy, pin store, and configuration | Tampering silently disables protection |
+| A-4 | Audit log | Evidence for investigation; must be trustworthy |
+| A-5 | Operator's attention and terminal | Misleading prompts and diffs trick approvals |
+| A-6 | Availability of the agent's tools | A gateway that breaks work gets removed |
 
 ### 7.2 Trust boundaries
-TB1 agent host ↔ gateway · TB2 gateway internals and state · TB3 gateway ↔ upstream servers (untrusted) · TB4 gateway ↔ approver channel · TB5 gateway ↔ log sink.
 
-### 7.3 Threats addressed *by* the gateway (mapping to standards)
-| Threat | OWASP Agentic Top 10 (Dec 2025) | OWASP LLM Top 10 (2026) | Control |
+```mermaid
+flowchart LR
+  C["MCP client<br/>(trusted to follow protocol,<br/>model may be hijacked)"] -- "TB1: stdio pipes" --> B["Bulwark"]
+  B -- "TB3: stdio pipes" --> U["Upstream server<br/>(UNTRUSTED code + content)"]
+  B -- "TB4: filesystem" --> S[("config, pins,<br/>policies, audit")]
+  O(["Operator"]) -- "TB5: CLI + /dev/tty" --> B
+  U -. "same OS user unless containerized" .-> S
+```
+| Boundary | Between | Trust assumption |
+|---|---|---|
+| TB1 | Client ↔ Bulwark | Client process is trusted. **The model driving it may be hijacked**, so its requests are untrusted. |
+| TB2 | Inside Bulwark | Trusted code; our own attack surface (parser, pipeline) |
+| TB3 | Bulwark ↔ upstream | **Untrusted**: definitions, results, notifications, and server-initiated requests may all be malicious |
+| TB4 | Bulwark ↔ local state | Trusted only if the upstream can't write to it (see AR-2) |
+| TB5 | Operator ↔ Bulwark | Operator is trusted. Text shown to them comes from untrusted sources |
+
+### 7.3 Threats Bulwark mitigates
+| ID | Threat | OWASP Agentic Top 10 (Dec 2025) | OWASP LLM Top 10 (2026) | MITRE ATLAS | v0.1 control | Scenario |
+|---|---|---|---|---|---|---|
+| M-1 | Tool poisoning in definitions | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 Prompt Injection | AML.T0051 LLM Prompt Injection | Analyzers + hide in `enforce` (FR-022) | L-01, L-06 |
+| M-2 | Rug pull (definition changes after approval) | ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | `VERIFY:` supply-chain technique ID | Pinning + verify-before-call (FR-021, FR-030) | L-02 |
+| M-3 | Tool shadowing (one tool's text steers another's use) | ASI02 Tool Misuse and Exploitation | LLM01 | AML.T0051 | Cross-reference analyzer + argument policy (FR-022, FR-024) | L-03 |
+| M-4 | Indirect injection through tool results, leading to exfiltration | ASI01 Agent Goal Hijack | LLM01; LLM02 Sensitive Information Disclosure | AML.T0051 (indirect) | Egress allowlist + secret redaction (FR-024, FR-025) | L-04 |
+| M-5 | Data exfiltration through tool arguments | ASI02 Tool Misuse and Exploitation | LLM02 | `VERIFY:` exfiltration technique ID | Schema analyzer + argument redaction (FR-022, FR-025) | L-05 |
+| M-6 | Over-privileged tool use | ASI03 Identity and Privilege Abuse | `VERIFY:` Excessive Agency ID in the 2026 list | — | Default-deny policy with argument constraints (FR-023, FR-024) | Policy tests |
+| M-7 | No record of agent actions | ASI10 Rogue Agents (detection) | — | — | Hash-chained audit (FR-026) | Tamper tests |
+
+> OWASP Agentic IDs and titles were confirmed against several sources in November 2026. `VERIFY:` the exact title of ASI06 (sources differ), and all ATLAS IDs other than AML.T0051, against atlas.mitre.org before v0.1.
+
+### 7.4 Threats to Bulwark (STRIDE)
+| ID | Boundary | STRIDE | Threat | Mitigation | Requirement | Residual |
+|---|---|---|---|---|---|---|
+| T-01 | TB3 | Tampering | **Parser differential:** a message with duplicate JSON keys (`"description"` twice) is read one way by Bulwark and another way by the client, so the analyzers inspect harmless text while the model sees the poison | Reject duplicate keys and invalid UTF-8; **forward the re-serialized form Bulwark inspected**, never the original bytes | FR-028 | Low |
+| T-02 | TB3 | Tampering | Unicode tricks (homoglyphs, zero-width characters, Tag-block characters, bidi controls) hide instructions from pattern matching | Analyzers inspect both raw and NFKC-normalized text; `unicode.hidden` flags invisible characters | FR-022 | Medium (new encodings) |
+| T-03 | TB3 | DoS | Oversized, deeply nested, or flooding messages (including notification storms) exhaust memory or CPU | Size and depth limits, bounded queues, rate limits on notifications; violations error out and are audited | NFR-013 | Low |
+| T-04 | TB3 | Spoofing | **Response ID confusion:** upstream answers with the ID of another request, or replies to gateway-originated requests to confuse the client | Per-direction ID tracking; gateway-originated requests use a reserved ID namespace and are never forwarded; unmatched responses are dropped and audited | FR-031 | Low |
+| T-05 | TB3 | Tampering | Server-initiated requests (sampling, elicitation) used to inject content or extract data | v0.1: passed through, **audited**, and flagged in `audit tail`; enforcement planned for v0.2 | FR-026 | Medium (accepted for v0.1) |
+| T-06 | TB3 | Tampering | **Behavioral rug pull:** definition stays the same but the tool's behavior changes | Out of scope for pinning (definitions only); argument policy and result redaction limit impact | FR-024, FR-025 | Medium (AR-4) |
+| T-07 | TB3 | Evasion | Payloads crafted to slip past analyzers (paraphrase, splitting across fields, base64) | Layered defense: pinning and policy don't depend on detection; adversarial corpus grows with each bypass | FR-006, FR-022 | Medium (AR-5) |
+| T-08 | TB4 | Tampering | Pins, policies, or config modified to approve a malicious tool | File permission checks at startup (warn if group- or world-writable); every pin change is audited; container wrapping keeps the upstream away from the files | FR-026 | **High without container** (AR-2) |
+| T-09 | TB4 | Repudiation | Audit records edited or deleted | SHA-256 hash chain; `audit verify`. Full chain rewrite or tail truncation is detectable only with an external anchor (v0.2 signed checkpoints) | FR-026, NFR-006 | Medium (AR-6) |
+| T-10 | TB4 | Info disclosure | Secrets written into the audit log | Redact before logging; store argument digests rather than raw values by default | FR-025, FR-026 | Low |
+| T-11 | TB5 | Spoofing | **Terminal escape injection:** tool text containing ANSI escapes or bidi controls makes a diff or approval prompt show something other than the truth | All untrusted text printed by the CLI goes through `termsafe` (escapes rendered visibly) | FR-029 | Low |
+| T-12 | TB5 | Spoofing | Approval prompt hijack: prompts read from stdin, which carries MCP traffic | Interactive prompts use `/dev/tty` only; with no TTY, `ask` = deny | FR-023 | Low |
+| T-13 | TB1 | Elevation | **Bypass:** the agent is configured to launch the server directly, not through Bulwark | Documented; `bulwark doctor` (later) checks known client configs | — | Medium (AR-3) |
+| T-14 | TB2 | Tampering | Supply-chain compromise of Bulwark or its dependencies | Pinned `go.sum`, `govulncheck` and dependency review in CI, SBOM, signed releases | NFR-012, NFR-015 | Low |
+| T-15 | TB2 | DoS | Policy engine error or panic leaves calls unchecked | Fail closed (NFR-005); panics in interceptors are recovered and become denials | NFR-005 | Low |
+
+### 7.5 Attack suite threats
+| ID | Threat | Mitigation | Requirement |
 |---|---|---|---|
-| Tool poisoning in descriptions | `VERIFY:` ASI02 Tool Misuse / ASI04 Agentic Supply Chain | LLM01 Prompt Injection | Static analyzers, pinning |
-| Rug pull | `VERIFY:` ASI04 | — | Pinning in `enforce` mode |
-| Tool shadowing / name collision | `VERIFY:` ASI02 | LLM01 | Namespacing, cross-reference analyzer |
-| Indirect injection through tool results | `VERIFY:` ASI01 Agent Goal Hijack | LLM01 | Classifier, taint labels |
-| Data exfiltration through egress tools or arguments | `VERIFY:` ASI02 | LLM02 Sensitive Information Disclosure | Taint policies, DLP, argument constraints |
-| Excessive agency / over-privileged tools | `VERIFY:` ASI03 Identity & Privilege Abuse | `VERIFY:` Excessive Agency ID in 2026 list | Least-privilege policies |
-| Token passthrough / confused deputy | `VERIFY:` ASI03 | — | Gateway-held credentials (with Streamable HTTP, v0.2) |
-| Exploiting human approval | `VERIFY:` ASI09 Human-Agent Trust Exploitation | — | Clear diffs, rate limits, approve by policy |
+| T-L1 | Lab server touches the network or real files | No network code in lab servers; suite runs in a network-disabled job; all writes confined to a temp directory | FR-002, NFR-003 |
+| T-L2 | Someone configures a lab server in a real agent by mistake | `bulwark-lab` refuses to start without `BULWARK_LAB=1`; `LAB ONLY` banner on stderr; tool descriptions carry a visible lab marker outside the attack payload | FR-032 |
+| T-L3 | Lab code is reused as an attack toolkit | Only publicly documented techniques; canaries only; no evasion tuning against real products | Hard rule 4 |
 
-> `VERIFY:` all Agentic Top 10 IDs and titles against genai.owasp.org before approval. Also map to **MITRE ATLAS** techniques.
+### 7.6 Accepted risks (stated in the README's "Limitations" section)
+| ID | Risk | Why accepted | Guidance |
+|---|---|---|---|
+| AR-1 | A malicious stdio server is local code running as the user. It can read files or use the network **directly**, without going through MCP | Bulwark controls the agent-mediated channel; it isn't a sandbox | Run untrusted servers in a container: `bulwark wrap -- docker run -i --rm --network none <image>` |
+| AR-2 | The same server can modify Bulwark's state files (T-08) | Same as AR-1 | Container wrapping; store state outside any directory mounted into the container |
+| AR-3 | Bypass through misconfiguration (T-13) | Local tool; can't control the client | Documentation; `doctor` check later |
+| AR-4 | Tool behavior isn't pinned, only definitions (T-06) | Behavior can't be fingerprinted from the protocol | Argument policy, redaction; taint tracking in v0.2 |
+| AR-5 | Analyzers can be evaded (T-07) | Detection is never complete | Pinning and policy work regardless of detection |
+| AR-6 | The audit chain can be rewritten wholesale by someone with write access (T-09) | Needs an external anchor | Signed checkpoints in v0.2 |
+| AR-7 | Prompt injection itself isn't prevented | NG1: Bulwark limits damage | — |
 
-### 7.4 Threats *to* the gateway (STRIDE starter)
-| ID | Boundary | STRIDE | Threat | Mitigation (draft) |
-|---|---|---|---|---|
-| T-01 | TB1 | Spoofing | A rogue local process connects as an agent | Local socket permissions; per-client tokens in central mode |
-| T-02 | TB1 | Elevation | The agent bypasses the gateway and talks to servers directly | Only the gateway holds credentials; network egress policy; documented deployment requirement |
-| T-03 | TB3 | Tampering | A malicious upstream sends malformed or huge JSON-RPC to crash or exploit the parser | Strict schema validation, size limits, fuzzing |
-| T-04 | TB2 | Tampering | Pin store or policy files modified | File permissions, signed policy bundles (later), config integrity check at startup |
-| T-05 | TB5 | Repudiation / Tampering | Audit records altered or deleted | Hash chain, external anchoring, append-only sink |
-| T-06 | TB3 | Info disclosure | Secrets in results reach the model or logs | Redaction before logging and forwarding |
-| T-07 | TB2 | DoS | Classifier or approval latency stalls agents | Timeouts, tiered inspection, circuit breakers |
-| T-08 | TB2 | Evasion | Attacker tunes payloads to slip past the analyzers | Layered detectors, taint containment that doesn't depend on detection, adversarial test corpus |
-| T-09 | TB4 | Spoofing | Fake approval responses | Authenticated approval channel, signed callbacks |
-
-**Questions to resolve**
-1. What is the default deployment posture (local developer vs. central), and which threats are accepted in each?
-2. Is signed policy distribution needed for the MVP?
-
----
+### 7.7 Security requirements derived from this model
+These were added to §2 in v0.6: **FR-028** (strict parsing, forward what was inspected), **FR-029** (terminal-safe output), **FR-030** (verify before call), **FR-031** (request ID isolation), **FR-032** (lab binary guard), **NFR-013** (resource limits), **NFR-014** (no network listeners or connections), **NFR-015** (dependency hygiene).
 
 ## 8. AI/ML design 📝 (seed notes)
 
@@ -525,8 +636,16 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 
 **Why attacks first:** every protection starts as a failing attack test and is finished when that test passes. This is test-driven development applied to security, and it means the README's claims are all backed by CI ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended by [ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)).
 
-## 13. Alternatives considered 📝
-To be written with ADRs. Expected entries: implementation language (Go / Rust / Python / TypeScript), policy engine (Cedar / OPA / custom DSL), deployment shape (sidecar per server vs. aggregator), and inline vs. out-of-band inspection.
+## 13. Alternatives considered
+| Decision | Chosen | Alternatives | Where |
+|---|---|---|---|
+| Positioning | Gateway + deterministic attack suite | Live-model benchmark; gateway only; benchmark only | [ADR-0002](docs/adr/0002-gateway-with-attack-suite.md) |
+| Language | Go | Python, TypeScript, Rust | [ADR-0003](docs/adr/0003-implementation-language.md) |
+| Policy engine | OPA/Rego with a default-deny combiner | Cedar, custom YAML, Go plugins | [ADR-0004](docs/adr/0004-policy-engine.md) |
+| Deployment shape (v0.1) | One process per wrapped server | Aggregating gateway (v0.2) | §4, decision 9 |
+| Lab sink | Observation log file | Loopback HTTP listener (needs networking in tests) | §4.2, decision 10 |
+| Rug-pull detection | Verify before call (gateway-initiated `tools/list`) | Rely on `list_changed` notifications only (misses silent changes) | §4.4, decision 11 |
+| Forwarding | Re-serialize the inspected message | Forward original bytes (parser-differential risk, T-01) | §7.4, decision 12 |
 
 ## 14. Decision log and open questions
 
@@ -540,25 +659,31 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 | 5 | Use MCPTox poisoned tool definitions as analyzer test data (license permitting) | Deterministic detection metric comparable with published research | — | 2026-11-26 |
 | 6 | Sampling/elicitation passed through and audited, not enforced, in v0.1 | Keeps the MVP small; still visible in audit logs | — | 2026-11-26 |
 | 7 | Working agreement: Claude drafts with recommendations applied; maintainer reviews by PR | Maintainer has 1–2 h/week | — | 2026-11-26 |
+| 8 | Go for gateway, lab, and suite; MCP baseline 2026-07-28 | Single-binary releases, native OPA, stable official SDK | [ADR-0003](docs/adr/0003-implementation-language.md) | 2026-11-26 |
+| 9 | One gateway process per wrapped server in v0.1 | Simplest model; matches how MCP clients launch stdio servers | — | 2026-11-26 |
+| 10 | Lab sink is an observation log file, not a network listener | Lets the suite run with networking fully disabled | — | 2026-11-26 |
+| 11 | Verify-before-call in `enforce` mode, default every call | Catches silent rug pulls; costs one local round trip | — | 2026-11-26 |
+| 12 | Forward re-serialized inspected messages; reject duplicate keys | Closes parser-differential bypasses (T-01) | — | 2026-11-26 |
+| 13 | OPA/Rego with default-deny combiner and gateway-derived attributes | Expressive, testable, widely recognized | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-26 |
 
 ### 14.2 Open questions
-- Q1 Core language (ADR due in design 02)
-- Q2 Policy engine: Cedar vs. OPA/Rego (ADR due in design 02)
+- Q1 Deny response format: JSON-RPC error vs. tool result with `isError: true` (design 03; test with real clients)
+- Q2 Pin store location and format details; server identity for stdio (design 03)
 - Q3 Classifier strategy (v0.3)
 
 ## 15. Spec backlog (draft)
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
-| 001 | Lab scenarios L-01…L-06 + manifests + canary sink | FR-001, FR-002, NFR-003 | M1 |
+| 001 | Lab scenarios L-01…L-06 + manifests + observation log | FR-001, FR-002, FR-032, NFR-003 | M1 |
 | 002 | Replay client + scenario runner + CI results table | FR-003, FR-004, FR-005, NFR-008 | M1 |
-| 003 | stdio proxy passthrough | FR-020, NFR-004 | M1 |
+| 003 | stdio proxy passthrough + strict JSON-RPC handling + request ID isolation | FR-020, FR-028, FR-031, NFR-004, NFR-013, NFR-014 | M1 |
 | 004 | Hash-chained audit log + `audit verify/tail` | FR-026, NFR-006 | M1 |
-| 005 | Fingerprinting + pin store + modes | FR-021 | M2 |
+| 005 | Fingerprinting + pin store + modes + verify-before-call | FR-021, FR-030 | M2 |
 | 006 | Static analyzers (first 4) + detection corpora | FR-022, FR-006 | M2 |
-| 007 | `tools` CLI (list/diff/approve/reject) | FR-027 | M2 |
+| 007 | `tools` CLI (list/diff/approve/reject) + terminal-safe output | FR-027, FR-029 | M2 |
 | 008 | Policy engine + argument constraints + `policy test` | FR-023, FR-024, NFR-005 | M3 |
 | 009 | Secret detection + redaction | FR-025 | M3 |
-| 010 | One-command demo + release pipeline (SBOM, signing) | FR-007, NFR-011, NFR-012 | M3 |
+| 010 | One-command demo + release pipeline (SBOM, signing, vuln scan) | FR-007, NFR-011, NFR-012, NFR-015 | M3 |
 | 011 | Streamable HTTP + multi-server aggregation | FR-040, FR-041 | M4 |
 | 012 | Taint tracker + taint-aware policy | FR-042 | M4 |
 | 013 | Approval broker | FR-043 | M4 |
@@ -567,7 +692,9 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 | 016 | Optional live-model mode | FR-046 | M5 |
 
 ## Appendix: References
-- Model Context Protocol specification: modelcontextprotocol.io (`VERIFY:` pinned revision)
+- Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28
+- Official MCP Go SDK: github.com/modelcontextprotocol/go-sdk (v1.7.0)
+- Open Policy Agent: openpolicyagent.org
 - OWASP GenAI Security Project: Top 10 for LLM Applications 2026; Top 10 for Agentic Applications (Dec 2025): genai.owasp.org
 - Cloud Security Alliance, *MCP Tool Poisoning and Rug Pull Attacks* whitepaper (May 2026)
 - arXiv 2603.22489: study of tool-poisoning defenses in MCP clients (2026)

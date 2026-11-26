@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (accepted on merge of the design PR) |
+| Status | Accepted |
 | Date | 2026-11-26 |
 | Design sections | DESIGN.md §1, §2, §10, §12 |
-| Requirements affected | FR-001…FR-008, FR-020…FR-027; goals G1–G6 |
+| Requirements affected | FR-001…FR-007, FR-020…FR-027; goals G1–G6 |
 | Amends | [ADR-0001](0001-lab-first-roadmap.md) |
 
 ## Context
