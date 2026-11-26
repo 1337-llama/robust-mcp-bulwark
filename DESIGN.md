@@ -4,8 +4,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft (seeded; sections marked 🌱 have starting material, 📝 are not yet written) |
-| Version | 0.1 |
-| Last updated | 2026-11-25 |
+| Version | 0.2 |
+| Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
 
@@ -13,6 +13,7 @@
 | Version | Date | Summary |
 |---|---|---|
 | 0.1 | 2026-11-25 | Initial skeleton with seeded architecture, flows, and threat model starters |
+| 0.2 | 2026-11-26 | Lab-first roadmap: attack lab and baseline benchmark moved to M1; added FR-017/FR-018; spec backlog renumbered |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](../docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -73,6 +74,8 @@ Agent Firewall is an **MCP-aware intermediary**. To the client it acts as a serv
 | FR-014 | The gateway shall score tool results and definitions with a prompt-injection classifier. | Later | G2, G4 |
 | FR-015 | An approval broker shall route `ask` decisions to a human channel and enforce timeouts. | Later | G3 |
 | FR-016 | The gateway shall export audit events as OpenTelemetry and OCSF. | Later | G5 |
+| FR-017 | The project shall include an attack lab of deliberately malicious but harmless MCP servers implementing scenarios L-01…L-06 (§10.3), using only canary secrets and a local exfiltration sink. | MVP | G7 |
+| FR-018 | A benchmark harness shall run each lab scenario against configurable agents (client + model) in `direct`, `gateway-warn`, and `gateway-enforce` modes, and report attack success rate (ASR) and benign task success rate. | MVP | G7 |
 
 ### 2.2 Non-functional requirements (draft)
 | ID | Category | Requirement | Measure |
@@ -428,6 +431,8 @@ Unit (analyzers, canonicalization, policy adapters) · property-based and fuzz t
 Load test with a synthetic client/server pair to measure gateway-only latency (NFR-001). Fault injection for fail-closed behavior (NFR-002). Tamper tests (NFR-004).
 
 ### 10.3 Attack lab and benchmark
+The lab is built **first** (M1, see §12). It establishes the baseline problem before any defenses exist, and every later milestone is measured against it.
+
 `lab/` contains deliberately malicious, **harmless** MCP servers. "Exfiltration" goes to a local sink and "secrets" are fake canaries.
 
 | Scenario | Description | Expected control |
@@ -450,12 +455,14 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | M0 | Design approved | Design review checklist passed |
-| M1 | Transparent proxy: stdio + HTTP passthrough with audit log | Works with 3 clients; audit chain verifies |
-| M2 | Registry + pinning + static analyzers + CLI | Lab L-01, L-02, L-03, L-06 detected |
-| M3 | Policy engine + argument constraints + secret redaction | Policy test suite; NFR-001 met |
-| M4 | Attack lab + benchmark harness; **v0.1 release** | Benchmark report published |
+| M1 | **Attack lab + benchmark harness; baseline with no gateway** | L-01…L-06 reproducible; baseline ASR measured for ≥2 agents (client + model); **public write-up #1:** how easily agents are hijacked through their tools |
+| M2 | Transparent proxy: stdio + HTTP passthrough with audit log | Works with 3 clients; benchmark runs through the gateway with unchanged benign task success; audit chain verifies |
+| M3 | Registry + pinning + static analyzers + CLI | Lab L-01, L-02, L-03, L-06 detected |
+| M4 | Policy engine + argument constraints + secret redaction; **v0.1 release** | Policy test suite; NFR-001 met; **public write-up #2:** before/after ASR |
 | M5 | Taint tracking + approval broker | L-04, L-05 contained |
 | M6 | Classifier tier + OTel/OCSF; **v0.2 release** | Classifier eval report |
+
+**Why lab-first:** the maintainer's strength is offensive security. Building the attacks first (1) produces a publishable result early, (2) gives every later milestone an objective before/after measurement, and (3) keeps the defenses focused on attacks that are shown to work rather than hypothetical ones.
 
 ## 13. Alternatives considered 📝
 To be written with ADRs. Expected entries: implementation language (Go / Rust / Python / TypeScript), policy engine (Cedar / OPA / custom DSL), deployment shape (sidecar per server vs. aggregator), and inline vs. out-of-band inspection.
@@ -465,9 +472,10 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 ### 14.1 Decision log
 | # | Decision | Rationale | ADR | Date |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| 1 | Lab-first roadmap: attack lab and baseline benchmark are M1, before any gateway code | Plays to offensive strengths, publishes a result early, and gives every milestone an objective before/after measure | — | 2026-11-26 |
 
 ### 14.2 Open questions (carried from IDEA.md)
+- Q0 Lab implementation language. Can it differ from the gateway's? (The lab servers are small; using the official MCP SDK in TypeScript or Python is fine either way.)
 - Q1 Core language: Go (official Go MCP SDK; `VERIFY:` maturity) vs. Python (official Python SDK; ML ecosystem) vs. hybrid
 - Q2 Cedar vs. OPA/Rego
 - Q3 Principal identity on stdio
@@ -477,17 +485,17 @@ To be written with ADRs. Expected entries: implementation language (Go / Rust / 
 ## 15. Spec backlog (draft)
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
-| 001 | stdio proxy passthrough | FR-001 | M1 |
-| 002 | Streamable HTTP proxy passthrough | FR-002, NFR-003 | M1 |
-| 003 | Hash-chained audit log + `audit verify` | FR-010, NFR-004 | M1 |
-| 004 | Multi-server aggregation + namespacing | FR-003 | M2 |
-| 005 | Fingerprinting + pin store + modes | FR-004, FR-005 | M2 |
-| 006 | Static analyzers framework + first 6 analyzers | FR-006 | M2 |
-| 007 | `tools` CLI (list/diff/approve) | FR-011 | M2 |
-| 008 | Policy engine integration + decision input | FR-007, FR-008 | M3 |
-| 009 | Secret detection + redaction | FR-009 | M3 |
-| 010 | Attack lab scenarios L-01…L-06 | G7 | M4 |
-| 011 | Benchmark harness + report | G7 | M4 |
+| 001 | Attack lab scenarios L-01…L-06 (canary secrets, local sink) | FR-017 | M1 |
+| 002 | Benchmark harness + baseline report | FR-018 | M1 |
+| 003 | stdio proxy passthrough | FR-001 | M2 |
+| 004 | Streamable HTTP proxy passthrough | FR-002, NFR-003 | M2 |
+| 005 | Hash-chained audit log + `audit verify` | FR-010, NFR-004 | M2 |
+| 006 | Multi-server aggregation + namespacing | FR-003 | M3 |
+| 007 | Fingerprinting + pin store + modes | FR-004, FR-005 | M3 |
+| 008 | Static analyzers framework + first 6 analyzers | FR-006 | M3 |
+| 009 | `tools` CLI (list/diff/approve) | FR-011 | M3 |
+| 010 | Policy engine integration + decision input | FR-007, FR-008 | M4 |
+| 011 | Secret detection + redaction | FR-009 | M4 |
 | 012 | Taint tracker + taint-aware policy | FR-012, FR-013 | M5 |
 | 013 | Approval broker | FR-015 | M5 |
 | 014 | Injection classifier tier | FR-014 | M6 |

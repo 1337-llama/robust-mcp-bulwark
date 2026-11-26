@@ -20,8 +20,13 @@
 
 Agent Firewall sits on every one of those arrows.
 
+## Roadmap at a glance (lab-first)
+1. **M1:** build the attack lab and measure how often attacks succeed against unprotected agents, then publish write-up #1
+2. **M2–M4:** build the gateway (proxy, pinning, analyzers, policy), rerun the same attacks, then publish write-up #2 (before/after)
+3. **M5–M6:** taint tracking, human approval, ML classifier
+
 ## Next steps
-1. Edit `IDEA.md`: sharpen scope, add maintainer notes, resolve or annotate the open questions.
+1. Moving to a standalone repository (pending repo creation).
 2. Ask Claude to stress-test the idea (prompt in [docs/WORKFLOW.md](../docs/WORKFLOW.md#stage-0-idea)).
 3. Start the design at §1–§2 (Requirements).
 4. Early ADRs to write: **core language** and **policy engine**.

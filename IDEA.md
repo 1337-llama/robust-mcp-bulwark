@@ -5,7 +5,7 @@
 | Status | Draft |
 | Theme | Securing AI |
 | Working name | Agent Firewall (placeholder; check for collisions before publishing) |
-| Last updated | 2026-11-25 |
+| Last updated | 2026-11-26 |
 
 ## Elevator pitch
 
@@ -61,6 +61,8 @@ The default open-source way to put a security boundary around agent tool use. It
 - **NG5** Not an MCP server registry or marketplace.
 
 ## Scope
+
+> **Build order is lab-first.** Attacks come before defenses. The attack lab and a baseline benchmark with no protection come first, and they become the project's first public write-up. The gateway is then built and measured against the same attacks. See DESIGN.md §12.
 
 ### MVP (v0.1)
 - Proxying for **stdio** and **Streamable HTTP** MCP transports
