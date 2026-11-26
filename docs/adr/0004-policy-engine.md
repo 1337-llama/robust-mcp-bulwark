@@ -19,10 +19,13 @@ Every `tools/call` must get an allow, deny, or ask decision based on the tool, i
 | Go code plugins | Unlimited | Go tests | Native | Hard to audit; policy becomes code | Low |
 
 ## Decision
-We will embed **OPA (Rego v1)**, with these conventions:
+We will embed **OPA (Rego v1, the default syntax since OPA 1.0)**, with these conventions:
 
 - Policies add entries to `deny`, `ask`, and `allow` sets, each entry being a policy ID. The **gateway combines them**: any `deny` → deny; else any `ask` → ask; else any `allow` → allow; **else deny (default-deny)**. No policy can "un-deny".
-- The gateway computes **derived attributes** before evaluation (cleaned absolute path, URL scheme and host, argument sizes), so policies don't re-implement fragile parsing such as `..` path tricks or URL confusion.
+- The gateway computes **derived attributes** before evaluation (cleaned absolute path, URL scheme and host, argument sizes), so policies don't re-implement fragile parsing such as `..` path tricks or URL confusion. Derived attributes are computed only for arguments whose **role** is declared in configuration and pinned with the tool, because argument names and meanings are chosen by the untrusted server.
+- The decision input carries the **server identity** (configured ID plus command digest) and the tool's **pin status**, both supplied by the gateway. Example policies always match on them, so a server cannot obtain another server's permissions by naming its tool `read_file`.
+- In v0.1, `ask` is treated as deny with an `approval_required` audit record. There is no interactive prompt (see DESIGN.md T-12); per-call approval arrives with the v0.2 approval broker.
+- Policies are compiled with an OPA **capabilities** set that removes network and runtime built-ins (for example `http.send`, `net.lookup_ip_addr`, `opa.runtime`). Policies cannot make network calls (NFR-014) or read the process environment. `VERIFY:` the full list of built-ins to remove for the OPA version pinned in spec 006.
 - Queries are prepared at startup and on policy reload. An evaluation error or timeout means deny (NFR-005).
 - `bulwark policy test` wraps OPA's test runner, and example policies ship with tests.
 - A simple YAML front-end that compiles to Rego for common cases is a later option, not v0.1.

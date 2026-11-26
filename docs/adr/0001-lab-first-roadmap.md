@@ -5,7 +5,7 @@
 | Status | Accepted; amended by [ADR-0002](0002-gateway-with-attack-suite.md) |
 | Date | 2026-11-26 |
 | Design sections | DESIGN.md §10.3, §12, §15 |
-| Requirements affected | FR-017, FR-018; goal G7 |
+| Requirements affected | Originally FR-017, FR-018 and goal G7 (IDs from DESIGN.md v0.2). After the v0.5 renumbering: FR-001…FR-008, goal G5 |
 
 ## Context
 The original roadmap built the gateway first (proxy → pinning → policy) and the attack lab and benchmark last (M4). That ordering has three problems:

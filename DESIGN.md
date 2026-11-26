@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft: §1–§4 and §7 drafted (✅); §5–§6 seed notes, revised in design 03; others seeded (🌱) or not yet written (📝) |
-| Version | 0.7 |
+| Version | 0.8 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -19,6 +19,7 @@
 | 0.5 | 2026-11-26 | Gateway with deterministic attack suite (ADR-0002, amends ADR-0001). Drafted §1–§3; renumbered FR/NFR; stdio-only v0.1; $0 and no-manual-testing constraints; updated §10, §12, §14, §15 |
 | 0.6 | 2026-11-26 | Design 02: §4 architecture (v0.1 stdio, attack suite components, verify-before-call), §7 threat model (STRIDE, mitigations mapping, accepted risks); ADR-0003 Go, ADR-0004 OPA; MCP baseline 2026-07-28; FR-028…032, NFR-013…015; file-based sink |
 | 0.7 | 2026-11-26 | Review fixes B1/B2: protocol handling rewritten for 2026-07-28 (no `initialize`, per-request `_meta`, `server/discover`, MRTR, `subscriptions/listen`) with 2025-11-25 compatibility; model-visible channel inventory (§4.5); whole-object tool fingerprints; FR-033…036; T-16…T-18; AR-8, AR-9; scenarios L-07, L-08 |
+| 0.8 | 2026-11-26 | Review fixes S1–S10: verify-before-call re-scoped (stale-only); policies bound to server identity and declared argument roles; `ask` = deny in v0.1 (no terminal prompt); per-control attribution in the suite; FR-032 → FR-008; NFR-003/004/010/014 made automatable and non-flaky; OWASP/ATLAS mappings corrected; CI budget; specs merged 10 → 8 with a cut line (§12.1); lossless re-serialization; T-19, AR-10, AR-11; decisions 18–24 |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -36,7 +37,7 @@ flowchart LR
   subgraph Suite["Attack suite (runs in CI)"]
     RC["Replay client<br/>(scripted hijacked agent)"]
     AS["Assertions + results table"]
-    K[("Local canary sink")]
+    K[("Observation log<br/>(file)")]
   end
   subgraph Mode["Condition"]
     D["none (direct) · bulwark (warn) · bulwark (enforce)"]
@@ -78,7 +79,7 @@ What changed in 2026-07-28 that matters to Bulwark (source: the official release
 | Change notifications | `notifications/tools/list_changed` | Delivered on a client-opened `subscriptions/listen` stream, opted into per notification type | Both forms invalidate Bulwark's cached tool view (§4.4) |
 | List caching | — | List results carry `ttlMs` and `cacheScope` | Recorded; used by the pin re-check schedule (design 03) |
 
-Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines (2025-11-25). `VERIFY:` before spec 003, against the official 2026-07-28 changelog and schema (not reachable from the drafting environment): (a) stdio framing is unchanged; (b) the exact `_meta` key that carries the protocol version on stdio (the release post shows an HTTP header plus `_meta` client info); (c) the `server/discover` result fields above match the final revision, not only the draft page; (d) the notification method names delivered on `subscriptions/listen`; (e) how an MRTR retry is correlated with the original call; (f) whether Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
+Over stdio, framing is newline-delimited JSON-RPC, and messages must not contain embedded newlines (2025-11-25). `VERIFY:` before spec 002, against the official 2026-07-28 changelog and schema (not reachable from the drafting environment): (a) stdio framing is unchanged; (b) the exact `_meta` key that carries the protocol version on stdio (the release post shows an HTTP header plus `_meta` client info); (c) the `server/discover` result fields above match the final revision, not only the draft page; (d) the notification method names delivered on `subscriptions/listen`; (e) how an MRTR retry is correlated with the original call; (f) whether Go SDK v1.7.0 can be pinned to 2025-11-25 per connection for the compatibility tests.
 
 ### 1.4 Glossary
 | Term | Definition |
@@ -114,11 +115,11 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | FR-001 | The suite shall provide scenarios L-01…L-08 (§10.3) as stdio MCP servers in `lab/`. Each has a manifest declaring ID, technique, OWASP/ATLAS mapping, replay script, and expected observables per condition. | MVP | G5 |
 | FR-002 | Lab servers shall use canary secrets only, record "exfiltration" only to the local observation log, and make no network connections at all. | MVP | G5 |
 | FR-003 | The replay client shall execute a scenario's replay script under a given protocol revision and record every message sent and received. Steps: for 2026-07-28, optional `server/discover`, then per-request `_meta`, `tools/list`, `tools/call` with given arguments, MRTR retries with scripted `inputResponses`, and waits on `subscriptions/listen`; for 2025-11-25, `initialize`/`initialized` first and `notifications/tools/list_changed` for waits. | MVP | G5 |
-| FR-004 | For each scenario, the suite shall assert the expected observables under each condition. At minimum, the attack must **succeed under `none`**, proving the scenario is real, and be **blocked or detected under `bulwark-enforce`**. | MVP | G5 |
+| FR-004 | For each scenario, the suite shall assert the expected observables under each condition. The attack must **succeed under `none`**, proving the scenario is real; be **detected under `bulwark-warn`** (the expected finding is in the audit log); and be **blocked under `bulwark-enforce`** (no attack observable is true). The manifest names the **control(s) expected to fire** (policy or analyzer IDs), and the suite asserts from the audit log that exactly those fired. When a scenario lists several controls, it runs once per control with only that control enabled, so each control is shown to stop the attack on its own. | MVP | G5 |
 | FR-005 | CI shall run the suite on every PR and publish a results table (scenario × condition) in the job summary. A failing assertion fails the build. | MVP | G5 |
-| FR-006 | An analyzer corpus test shall report detection rate on poisoned tool definitions (MCPTox subset, if its license permits; `VERIFY:` license and format) and false-positive rate on benign tool definitions from real open-source MCP servers. | MVP | G2, G5 |
+| FR-006 | An analyzer corpus test shall report detection rate on poisoned tool definitions (MCPTox subset, if its license permits; `VERIFY:` license and format; otherwise a self-written corpus that follows published technique descriptions and is labeled as such) and false-positive rate on benign tool definitions from real open-source MCP servers. | MVP | G2, G5 |
 | FR-007 | A one-command demo (`make demo` or a container image) shall run selected scenarios with and without Bulwark and print the results table, with no setup beyond Docker or the release binary. | MVP | G6 |
-| FR-032 | The `bulwark-lab` binary shall refuse to start unless `BULWARK_LAB=1` is set, and shall print a `LAB ONLY` banner to stderr on start. | MVP | G5 (T-L2) |
+| FR-008 | The `bulwark-lab` binary shall refuse to start unless `BULWARK_LAB=1` is set, and shall print a `LAB ONLY` banner to stderr on start. | MVP | G5 (T-L2) |
 
 **Bulwark Gateway (v0.1, stdio)**
 | ID | Requirement | Priority | Source |
@@ -126,14 +127,14 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | FR-020 | Gateway shall wrap one upstream stdio server command and proxy all MCP messages between client and server transparently when no policy applies. | MVP | G1 |
 | FR-021 | Gateway shall fingerprint every tool definition (the whole tool object, minus an explicit exclude list that is empty by default and recorded in the pin store) and compare it to the pin store. New or changed tools are handled by mode: `learn` (pin automatically), `warn` (forward and alert), `enforce` (hide the tool from the client until approved). | MVP | G2 |
 | FR-022 | Gateway shall run static analyzers on tool definitions and record findings with severities. At minimum: hidden Unicode, model-directed instructions, cross-tool references, and side-channel schema parameters. In `enforce` mode, tools with high-severity findings are hidden until approved. | MVP | G2 |
-| FR-023 | Gateway shall evaluate a policy for every `tools/call` and enforce `allow` or `deny`. `ask` is resolved by an interactive terminal prompt when one is available; otherwise it is treated as `deny`. | MVP | G3 |
-| FR-024 | Policies shall be able to constrain arguments: path prefixes, URL/domain allowlists, and regex patterns. | MVP | G3 |
-| FR-025 | Gateway shall detect secrets (pattern and entropy based) in tool arguments, MRTR `inputResponses`, and results (`content`, `structuredContent`, upstream error messages, and resource contents), and redact them according to configuration. | MVP | G3 |
+| FR-023 | Gateway shall evaluate a policy for every `tools/call` and enforce `allow` or `deny`. In v0.1, `ask` is treated as `deny`: the error tells the agent that approval is required, and an `approval_required` audit record names the policy ID so the operator can adjust policy or approve the tool with the CLI. v0.1 shows no interactive prompts; per-call approval comes with the approval broker (FR-043). | MVP | G3 |
+| FR-024 | Policies shall be able to constrain arguments: path prefixes, URL/domain allowlists, and regex patterns. Because tool names and argument meanings are chosen by the (untrusted) server, the decision input shall identify the **server** (configured server ID plus command digest) and the tool's **pin status**. Derived attributes (cleaned path, URL scheme and host) are computed only for arguments whose **role** (`fs_path`, `egress_url`, `recipient`, …) is declared in configuration; role mappings are stored with the tool's pin, and changing them is audited. | MVP | G3 |
+| FR-025 | Gateway shall detect secrets (pattern based in v0.1; entropy-based detection is deferred to cut false positives and scope) in tool arguments, MRTR `inputResponses`, and results (`content`, `structuredContent`, upstream error messages, and resource contents), and redact them according to configuration. | MVP | G3 |
 | FR-026 | Gateway shall write an audit record for every decision, chained with SHA-256 hashes so that any modification or deletion is detectable. | MVP | G4 |
 | FR-027 | The CLI shall support: `wrap`, `tools list/diff/approve/reject`, `policy test`, and `audit verify/tail`. | MVP | G1–G4 |
-| FR-028 | Gateway shall parse every message strictly: reject duplicate object keys, invalid UTF-8, and messages over the size or depth limits. It shall forward the **re-serialized form it inspected**, never the original bytes. | MVP | G2 (T-01) |
+| FR-028 | Gateway shall parse every message strictly: reject duplicate object keys, invalid UTF-8, `\u` escapes that encode lone UTF-16 surrogates, and messages over the size or depth limits. It shall forward the **re-serialized form it inspected**, never the original bytes. Re-serialization shall be **lossless**: numbers are kept exactly as written (never converted to floating point, so integers above 2^53 survive), and unknown fields are kept. A property test and a fuzz target check that parse → serialize → parse yields an identical message. | MVP | G2 (T-01) |
 | FR-029 | Every CLI output that includes untrusted text (tool definitions, diffs, prompts, audit fields) shall neutralize control characters, ANSI escapes, and bidi controls. | MVP | G2 (T-11) |
-| FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's current definition matches its approved pin, re-fetching `tools/list` itself when the last check is older than `pin_recheck_interval` (default: every call). | MVP | G2 (T-06, rug pull) |
+| FR-030 | In `enforce` mode, before forwarding a `tools/call`, Gateway shall confirm the called tool's last-seen definition matches its approved pin. It shall re-fetch `tools/list` itself when its view is stale: after a tool-change notification, when the server's `ttlMs` hint has expired, or when the view is older than `pin_recheck_max_age` (default 300 s). Setting `pin_recheck_max_age: 0` re-checks before every call (opt-in). | MVP | G2 (M-2) |
 | FR-031 | Gateway shall track outstanding request IDs (client-to-server always; server-to-client too under 2025-11-25), use a reserved ID namespace for its own requests (never forwarded), and drop and audit responses that match no outstanding request. | MVP | G2 (T-04) |
 | FR-033 | Gateway shall fingerprint, pin, and analyze **server metadata** (`instructions`, server info, capabilities) from `server/discover` (2026-07-28) or `initialize` (2025-11-25). In `enforce` mode, unapproved or changed metadata, or metadata with high-severity findings, has `instructions` and other free-text descriptive fields removed before forwarding until approved (name and version are kept). | MVP | G2 (M-8, B2) |
 | FR-034 | Gateway shall run the FR-022 analyzers on prompts (`prompts/list` metadata and `prompts/get` messages), resources (`resources/list` and template metadata), and MRTR input requests, and audit the findings. v0.1 does not block or pin these (AR-8). | MVP | G2 (M-8, M-9) |
@@ -156,18 +157,18 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 |---|---|---|---|
 | NFR-001 | Cost | Development, CI, and demo use no paid service | Dependency and workflow review |
 | NFR-002 | Automation | All verification runs in GitHub Actions. No requirement needs a manual or local test step by the maintainer. | Every NFR and FR maps to a CI job (§10) |
-| NFR-003 | Lab safety | The suite passes in a container with all networking disabled except loopback. Any other connection attempt fails the run. | CI job |
-| NFR-004 | Performance | Gateway adds p95 < 5 ms per message (no ML, no human approval) | Benchmark test in CI |
+| NFR-003 | Lab safety | The suite passes in a container with all networking disabled except loopback. Any other connection attempt fails the run. | CI job runs the suite under `strace -f -e trace=connect` (or an equivalent syscall trace, fixed in spec 001); any `connect` to a non-loopback, non-Unix address fails the job |
+| NFR-004 | Performance | Gateway pipeline adds p95 < 5 ms per message (no ML, no human approval), measured **in-process** with the upstream excluded | Go benchmark over a fixed corpus of recorded messages with a fixed iteration count; gates at 5 ms (far above the expected cost, so shared-runner noise cannot flip it). End-to-end latency, including upstream and verify-before-call round trips, is reported in the job summary but not gated |
 | NFR-005 | Reliability | Gateway fails closed by default if policy evaluation errors | Fault-injection test |
 | NFR-006 | Integrity | `audit verify` detects any modified, inserted, or deleted audit record | Tamper tests |
 | NFR-007 | Privacy | No data leaves the host: no telemetry, no external calls by the gateway | Network test in CI |
 | NFR-008 | Determinism | Suite results are identical across reruns (no flaky tests) | Each CI run executes the suite twice and compares results |
 | NFR-009 | CI time | The full CI pipeline finishes in ≤ 10 minutes | CI timing |
-| NFR-010 | Portability | Linux and macOS supported; Windows best-effort | CI matrix |
+| NFR-010 | Portability | Linux and macOS supported; Windows best-effort | Linux on every PR; macOS on merges to `main` and releases (C-4) |
 | NFR-011 | Usability | A reviewer goes from clone (or release download) to demo output in ≤ 10 minutes | Documented quickstart, scripted in CI |
 | NFR-012 | Supply chain | Releases are built in CI with an SBOM and signatures (Sigstore) | Release workflow |
 | NFR-013 | Resource limits | Configurable maximum message size (default 4 MiB), JSON nesting depth (default 64), outstanding requests, and notification rate. Exceeding a limit produces an error and an audit record, not a crash | Fuzz and limit tests in CI |
-| NFR-014 | Attack surface | v0.1 Gateway opens no network listeners and makes no network connections | Network-disabled CI run + code review checklist |
+| NFR-014 | Attack surface | v0.1 Gateway opens no network listeners and makes no network connections; policies cannot either (T-19) | Network-disabled, syscall-traced CI run (as in NFR-003); a CI check that fails if Bulwark's own packages import `net` or `net/http` directly (dependencies such as OPA may link them, which is why the trace is the real check); a test that loading a policy using `http.send` fails |
 | NFR-015 | Dependency hygiene | Dependencies pinned (`go.sum`); `govulncheck` and dependency review run in CI; no known-vulnerable dependency at release | CI job |
 
 ### 2.3 Constraints and assumptions
@@ -176,7 +177,7 @@ Requirement IDs: **FR-001…FR-019 attack suite and evaluation**, **FR-020…FR-
 | C-1 | Constraint | $0 budget (NFR-001). No paid APIs, hosted services, or paid GitHub features. |
 | C-2 | Constraint | Maintainer time is 1–2 hours/week. Claude designs, builds, and tests; the maintainer reviews PRs (≤ 30 minutes each). |
 | C-3 | Constraint | No manual testing or local model runs (NFR-002). |
-| C-4 | Constraint | The repo is private until the v0.1 launch. GitHub Actions minutes for private repos on the Free plan are limited (`VERIFY:` current allowance; 2,000 minutes/month at time of drafting). At ≤ 10 minutes per run (NFR-009) this allows about 200 runs per month. |
+| C-4 | Constraint | The repo is private until the v0.1 launch. GitHub Actions usage for private repos on the Free plan is limited (`VERIFY:` current allowance and pricing model; 2,000 Linux minutes/month at time of drafting), and **macOS runners cost about 10× Linux**. Budget: PR runs are Linux only (suite run twice for NFR-008, about 10 minutes); macOS runs on merges to `main` and on releases. At about 1 PR per week this stays well inside the allowance. Making the repo public earlier would remove this limit (maintainer's decision). |
 | A-1 | Assumption | Protocol-level replay is a faithful test of Bulwark's controls, because Bulwark acts only on protocol messages. It does **not** show how often a model would follow the malicious instructions. The docs cite published research for that (R3 in IDEA.md). |
 | A-2 | Assumption | The official Go MCP SDK (stable since v1.0.0; v1.7.0 supports revision 2026-07-28) is sufficient for the lab servers and replay client under both supported revisions (`VERIFY:` per-connection pinning to 2025-11-25, §1.3). The gateway parses JSON-RPC itself (ADR-0003). |
 
@@ -236,7 +237,7 @@ flowchart LR
   PL --- PN
   PL --- PO
   PL --> AU
-  OP -->|"bulwark tools / audit / policy<br/>(+ /dev/tty prompt)"| St
+  OP -->|"bulwark tools / audit / policy<br/>(separate CLI invocations)"| St
 ```
 
 The MCP client launches `bulwark wrap -- <server command>` instead of the server. Bulwark starts the real server as a child process and sits on both pipes. To the client it is a server, and to the server it is a client.
@@ -254,7 +255,7 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 | `internal/registry` | JCS canonicalization, whole-object fingerprints for tools and server metadata, pin store (JSON file), `learn`/`warn`/`enforce` modes, diffs | FR-021, FR-030, FR-033 |
 | `internal/analyzers` | Analyzer interface, text normalization helpers, the first four analyzers, applied to every model-visible channel in §4.5 | FR-022, FR-033, FR-034 |
 | `internal/policy` | Embedded OPA: decision-input builder (including derived attributes such as cleaned paths and URL hosts), prepared queries, decision combining | FR-023, FR-024, NFR-005 |
-| `internal/redact` | Secret detectors (patterns + entropy) for arguments, MRTR input responses, and results | FR-025, FR-035 |
+| `internal/redact` | Secret detectors (patterns in v0.1; entropy later) for arguments, MRTR input responses, and results | FR-025, FR-035 |
 | `internal/audit` | Hash-chained JSONL writer, `verify`, `tail` | FR-026, NFR-006 |
 | `internal/config` | YAML configuration with JSON Schema validation | — |
 | `internal/termsafe` | Neutralizes untrusted text (control characters, ANSI escapes, bidi controls) before printing it to a terminal | FR-029 |
@@ -262,7 +263,7 @@ The MCP client launches `bulwark wrap -- <server command>` instead of the server
 **Attack suite (`lab/`)**
 | Package | Responsibility | Key requirements |
 |---|---|---|
-| `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-08 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-032 |
+| `lab/cmd/bulwark-lab` | One binary containing lab servers L-01…L-08 (built on the official Go SDK). Refuses to start unless `BULWARK_LAB=1`; prints a `LAB ONLY` banner to stderr | FR-001, FR-002, FR-008 |
 | `lab/scenarios/*.yaml` | Scenario manifests: technique, mappings, replay script, expected observables per condition | FR-001, FR-004 |
 | `lab/replay` | Replay client: an MCP client (Go SDK) that executes a replay script under a chosen protocol revision and records the transcript | FR-003 |
 | `lab/suite` | Go tests: for each scenario × condition × revision, start the stack, replay, read the observation log, assert. All scenarios run under 2026-07-28; a compatibility subset (L-01, L-02, L-07) also runs under 2025-11-25 | FR-004, FR-036, NFR-008 |
@@ -355,7 +356,7 @@ sequenceDiagram
   B->>B: audit(call, revision, decision, policy IDs, latency)
 ```
 **MRTR retries (FR-035):** under 2026-07-28, a server asks for more input by returning `input_required` instead of sending its own request. The client's answers travel back to the server inside the retried `tools/call`, which makes them an exfiltration channel. Bulwark therefore gives the retry no shortcut: it is pin-checked, secret-scanned, and evaluated by policy like any other call, with `input.request.input_responses` and `input.request.is_retry` available to policies (§5.3). Under 2025-11-25 the same requests arrive as server-initiated `sampling/createMessage`, `elicitation/create`, or `roots/list`; v0.1 passes those through and audits them (decision 6).
-**Verify before call (FR-030):** in `enforce` mode, the gateway re-checks the called tool's definition with its own `tools/list` when the last check is older than `pin_recheck_interval` (default: before every call). This catches a rug pull even when the server sends no `list_changed` notification and the client never re-lists. The cost is one extra local round trip per call. It can be relaxed in configuration.
+**Verify before call (FR-030), and what it does and does not buy:** a changed definition can only reach the model through a `tools/list` response, and Bulwark already checks every one of those (FR-021). So the poisoning half of a rug pull is caught without any re-check. The re-check adds one thing: it notices that the server's **implementation has changed** (a new definition) even when the client never re-lists, and blocks calls to the changed tool until it is re-approved. That is a useful signal of a behavioral change, but only a signal. A malicious server defeats it by always answering `tools/list` with the pinned definition, which is exactly the behavioral rug pull in T-06 (AR-4). The re-check therefore runs when Bulwark's view is stale (after a change notification, when `ttlMs` expires, or after `pin_recheck_max_age`, default 300 s), not before every call. Re-checking before every call is opt-in, because it doubles upstream traffic and can disturb stateful servers for little extra protection.
 
 **Attack suite run (CI)**
 ```mermaid
@@ -419,33 +420,40 @@ OPA/Rego, embedded ([ADR-0004](docs/adr/0004-policy-engine.md)). Decision input 
 
 ```json
 {
-  "tool": {"name": "http_post", "pin_status": "approved", "annotations": {"readOnlyHint": false}},
+  "server": {"id": "web", "command_digest": "sha256:…"},
+  "tool": {"name": "http_post", "pin_status": "approved", "arg_roles": {"url": "egress_url"}, "annotations": {"readOnlyHint": false}},
   "arguments": {"url": "https://api.example.com/v1/upload", "body": "…"},
   "request": {"revision": "2026-07-28", "is_retry": false, "input_responses": null},
-  "derived": {"url_scheme": "https", "url_host": "api.example.com", "path_clean": null, "args_bytes": 812},
+  "derived": {"egress_url": {"scheme": "https", "host": "api.example.com"}, "fs_path": null, "args_bytes": 812},
   "findings": [{"analyzer": "secrets", "severity": "high", "location": "arguments.body"}],
-  "mode": "enforce",
-  "server": {"command_digest": "sha256:…"}
+  "mode": "enforce"
 }
 ```
 
-Example policy. The gateway combines the sets: any `deny` → deny; else any `ask` → ask; else any `allow` → allow; else deny.
+`server.id` is the name the operator gave the wrapped server in configuration, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from configuration and is pinned with the tool. A tool with no declared roles gets no derived attributes, so a rule that needs one simply does not match, and default-deny applies.
+
+Example policy. The gateway combines the sets: any `deny` → deny; else any `ask` → ask (in v0.1, deny with an `approval_required` record); else any `allow` → allow; else deny.
 
 ```rego
 package bulwark.authz
 
-import rego.v1
+# Rego v1 syntax (the default in OPA 1.x, so no `import rego.v1` is needed).
 
-# Reads only inside the workspace (path_clean is computed by the gateway).
+# Reads only inside the workspace, and only from the server configured as "fs".
+# fs_path is the cleaned path the gateway derived from the argument declared as fs_path.
 allow contains "fs-read-workspace" if {
+	input.server.id == "fs"
+	input.tool.pin_status == "approved"
 	input.tool.name == "read_file"
-	startswith(input.derived.path_clean, "/workspace/")
+	startswith(input.derived.fs_path, "/workspace/")
 }
 
-# Outbound HTTP only to approved hosts.
+# Outbound HTTP only from the "web" server, only to approved hosts.
 allow contains "http-allowlist" if {
+	input.server.id == "web"
+	input.tool.pin_status == "approved"
 	input.tool.name == "http_post"
-	input.derived.url_host in {"api.example.com"}
+	input.derived.egress_url.host in {"api.example.com"}
 }
 
 # Never send anything that looks like a secret.
@@ -463,7 +471,7 @@ deny contains "no-secrets-out" if {
 - Inspired by information-flow defenses such as CaMeL (Google DeepMind, 2025). Clearly document what this simplified model does *not* catch, such as egress through a write tool that syncs to the cloud.
 
 ### 5.5 Inspection of results
-Secret detection (regex + entropy, using rule sets similar in spirit to gitleaks) and the injection classifier score (§8). Possible actions: annotate, redact, block, or add a taint label.
+Secret detection (regex rules similar in spirit to gitleaks in v0.1; entropy scoring later) and the injection classifier score (§8). Possible actions: annotate, redact, block, or add a taint label.
 
 ### 5.6 Approval broker (v0.2)
 Channels: interactive CLI, webhook (Slack/Teams), and possibly MCP elicitation back to the client. `VERIFY:` whether elicitation is suitable, since it shows the request through the very client that might be compromised. Timeout leads to the policy-defined default (deny).
@@ -485,12 +493,12 @@ See §6.3 for the record schema. Hash chain: `hash = SHA-256(prev_hash || canoni
 
 ### 6.1 CLI (draft)
 ```
-bulwark run --config gateway.yaml           # start the gateway
+bulwark run --config gateway.yaml           # (v0.2) start a multi-server gateway
 bulwark wrap -- npx -y <server-package>    # quick local stdio wrapper
 bulwark tools list|diff|approve|reject
 bulwark policy test --input call.json      # dry-run a decision
-bulwark audit verify|tail|export --format ocsf
-bulwark lab run <scenario>                 # run attack lab scenarios
+bulwark audit verify|tail                  # export --format ocsf in v0.3
+bulwark lab run <scenario>                 # (later) lab is driven by `go test` in v0.1
 ```
 
 ### 6.2 Configuration schema (draft)
@@ -576,7 +584,7 @@ flowchart LR
   C["MCP client<br/>(trusted to follow protocol,<br/>model may be hijacked)"] -- "TB1: stdio pipes" --> B["Bulwark"]
   B -- "TB3: stdio pipes" --> U["Upstream server<br/>(UNTRUSTED code + content)"]
   B -- "TB4: filesystem" --> S[("config, pins,<br/>policies, audit")]
-  O(["Operator"]) -- "TB5: CLI + /dev/tty" --> B
+  O(["Operator"]) -- "TB5: CLI" --> B
   U -. "same OS user unless containerized" .-> S
 ```
 | Boundary | Between | Trust assumption |
@@ -590,17 +598,17 @@ flowchart LR
 ### 7.3 Threats Bulwark mitigates
 | ID | Threat | OWASP Agentic Top 10 (Dec 2025) | OWASP LLM Top 10 (2026) | MITRE ATLAS | v0.1 control | Scenario |
 |---|---|---|---|---|---|---|
-| M-1 | Tool poisoning in definitions | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 Prompt Injection | AML.T0051 LLM Prompt Injection | Analyzers + hide in `enforce` (FR-022) | L-01, L-06 |
-| M-2 | Rug pull (definition changes after approval) | ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | `VERIFY:` supply-chain technique ID | Pinning + verify-before-call (FR-021, FR-030) | L-02 |
-| M-3 | Tool shadowing (one tool's text steers another's use) | ASI02 Tool Misuse and Exploitation | LLM01 | AML.T0051 | Cross-reference analyzer + argument policy (FR-022, FR-024) | L-03 |
-| M-4 | Indirect injection through tool results, leading to exfiltration | ASI01 Agent Goal Hijack | LLM01; LLM02 Sensitive Information Disclosure | AML.T0051 (indirect) | Egress allowlist + secret redaction (FR-024, FR-025) | L-04 |
-| M-5 | Data exfiltration through tool arguments | ASI02 Tool Misuse and Exploitation | LLM02 | `VERIFY:` exfiltration technique ID | Schema analyzer + argument redaction (FR-022, FR-025) | L-05 |
-| M-6 | Over-privileged tool use | ASI03 Identity and Privilege Abuse | `VERIFY:` Excessive Agency ID in the 2026 list | — | Default-deny policy with argument constraints (FR-023, FR-024) | Policy tests |
-| M-7 | No record of agent actions | ASI10 Rogue Agents (detection) | — | — | Hash-chained audit (FR-026) | Tamper tests |
-| M-8 | Poisoning through server metadata (`instructions`, server info) and other non-tool channels (prompts, resources) | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | AML.T0051 | Pin, analyze, and strip server metadata in `enforce` (FR-033); analyze and audit prompts and resources (FR-034) | L-07 |
-| M-9 | Solicitation and exfiltration through MRTR input requests (the server asks for data; the answer goes back to it) | ASI01 Agent Goal Hijack; ASI09 Human-Agent Trust Exploitation (`VERIFY:` title) | LLM01; LLM02 | AML.T0051 | Retry evaluated as a full call: secret scan of `inputResponses` + policy (FR-035); input requests analyzed (FR-034) | L-08 |
+| M-1 | Tool poisoning in definitions | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 Prompt Injection | AML.T0051.001 LLM Prompt Injection: Indirect | Analyzers + hide in `enforce` (FR-022) | L-01, L-06 |
+| M-2 | Rug pull (definition changes after approval) | ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | AML.T0010 AI Supply Chain Compromise (`VERIFY:`) | Pinning + verify-before-call (FR-021, FR-030) | L-02 |
+| M-3 | Tool shadowing (one tool's text steers another's use) | ASI02 Tool Misuse and Exploitation | LLM01 | AML.T0051.001 | Cross-reference analyzer + argument policy (FR-022, FR-024) | L-03 |
+| M-4 | Indirect injection through tool results, leading to exfiltration | ASI01 Agent Goal Hijack | LLM01; LLM02 Sensitive Information Disclosure | AML.T0051.001 | Egress allowlist + secret redaction (FR-024, FR-025) | L-04 |
+| M-5 | Data exfiltration through tool arguments | ASI02 Tool Misuse and Exploitation | LLM02 | AML.T0086 Exfiltration via AI Agent Tool Invocation (`VERIFY:`) | Schema analyzer + argument redaction (FR-022, FR-025) | L-05 |
+| M-6 | Over-privileged tool use | ASI03 Identity and Privilege Abuse | LLM03 Excessive Agency (2026 numbering; `VERIFY:` on genai.owasp.org) | — | Default-deny policy with argument constraints (FR-023, FR-024) | Policy tests |
+| M-7 | No record of agent actions | — (supports detection and response for every ASI risk; it mitigates none directly) | — | — | Hash-chained audit (FR-026) | Tamper tests |
+| M-8 | Poisoning through server metadata (`instructions`, server info) and other non-tool channels (prompts, resources) | ASI01 Agent Goal Hijack; ASI04 Agentic Supply Chain Vulnerabilities | LLM01 | AML.T0051.001 | Pin, analyze, and strip server metadata in `enforce` (FR-033); analyze and audit prompts and resources (FR-034) | L-07 |
+| M-9 | Solicitation and exfiltration through MRTR input requests (the server asks for data; the answer goes back to it) | ASI01 Agent Goal Hijack; ASI09 Human-Agent Trust Exploitation (`VERIFY:` title) | LLM01; LLM02 | AML.T0051.001 | Retry evaluated as a full call: secret scan of `inputResponses` + policy (FR-035); input requests analyzed (FR-034) | L-08 |
 
-> OWASP Agentic IDs and titles were confirmed against several sources in November 2026. `VERIFY:` the exact title of ASI06 (sources differ), and all ATLAS IDs other than AML.T0051, against atlas.mitre.org before v0.1.
+> OWASP Agentic IDs and titles were confirmed against several secondary sources in November 2026. Tool poisoning is mapped to the **indirect** prompt-injection sub-technique (AML.T0051.001), because tool metadata is content the model ingests. Before v0.1, `VERIFY:` against the primary sources: the ASI09 title (genai.owasp.org), LLM03 in the 2026 LLM list (several entries moved from 2025), and AML.T0010 and AML.T0086 (atlas.mitre.org).
 
 ### 7.4 Threats to Bulwark (STRIDE)
 | ID | Boundary | STRIDE | Threat | Mitigation | Requirement | Residual |
@@ -616,19 +624,20 @@ flowchart LR
 | T-09 | TB4 | Repudiation | Audit records edited or deleted | SHA-256 hash chain; `audit verify`. Full chain rewrite or tail truncation is detectable only with an external anchor (v0.2 signed checkpoints) | FR-026, NFR-006 | Medium (AR-6) |
 | T-10 | TB4 | Info disclosure | Secrets written into the audit log | Redact before logging; store argument digests rather than raw values by default | FR-025, FR-026 | Low |
 | T-11 | TB5 | Spoofing | **Terminal escape injection:** tool text containing ANSI escapes or bidi controls makes a diff or approval prompt show something other than the truth | All untrusted text printed by the CLI goes through `termsafe` (escapes rendered visibly) | FR-029 | Low |
-| T-12 | TB5 | Spoofing | Approval prompt hijack: prompts read from stdin, which carries MCP traffic | Interactive prompts use `/dev/tty` only; with no TTY, `ask` = deny | FR-023 | Low |
+| T-12 | TB5 | Spoofing | Approval prompt hijack: prompts read from stdin, which carries MCP traffic; or, in a terminal-based agent, a prompt on the shared terminal corrupts the agent's interface and races it for keystrokes | v0.1 has **no interactive prompts**: `ask` = deny with an `approval_required` audit record; approval happens out of band through the CLI. (GUI clients launch servers with no terminal at all, so a terminal prompt could not work there anyway.) | FR-023 | Low |
 | T-13 | TB1 | Elevation | **Bypass:** the agent is configured to launch the server directly, not through Bulwark | Documented; `bulwark doctor` (later) checks known client configs | — | Medium (AR-3) |
 | T-14 | TB2 | Tampering | Supply-chain compromise of Bulwark or its dependencies | Pinned `go.sum`, `govulncheck` and dependency review in CI, SBOM, signed releases | NFR-012, NFR-015 | Low |
 | T-15 | TB2 | DoS | Policy engine error or panic leaves calls unchecked | Fail closed (NFR-005); panics in interceptors are recovered and become denials | NFR-005 | Low |
 | T-16 | TB3 | Info disclosure | **MRTR solicitation:** an `input_required` result asks the user or model for a secret or file contents, and the retried call carries the answer back to the server, bypassing checks that only look at ordinary arguments | Retry treated as a new `tools/call`: pin check, secret scan of `inputResponses`, policy with `input.request` (FR-035); input-request text analyzed and audited (FR-034) | FR-034, FR-035 | Medium (non-secret-shaped data still passes if policy allows the call) |
 | T-17 | TB1/TB3 | Evasion | **Revision confusion:** a message in an older, unknown, or mixed revision is shaped so that Bulwark's interceptors miss it (for example server metadata arriving through `initialize` when Bulwark expects `server/discover`, or a change notification in the other revision's form) | Per-message revision detection; both supported revisions map onto one internal model so every control applies to both; unsupported revisions rejected in `enforce`; compatibility subset of the suite runs under 2025-11-25 | FR-036 | Low |
 | T-18 | TB3 | Evasion | **Pin evasion through unhashed fields:** a server changes or poisons a tool field that the fingerprint does not cover (`icons`, `_meta`, a field from a newer revision) | Whole-object fingerprint with an explicit, audited exclude list (empty by default); unknown fields are kept and hashed, never dropped | FR-021, FR-028 | Low |
+| T-19 | TB4 | Info disclosure | **Policy as an exfiltration path:** a policy file (malicious, or copied carelessly) uses OPA network or runtime built-ins such as `http.send` to send decision inputs, which include arguments, to a remote host, or reads the environment | Policies compiled with an OPA capabilities set that removes network and runtime built-ins; loading a policy that uses them fails (ADR-0004) | NFR-014 | Low |
 
 ### 7.5 Attack suite threats
 | ID | Threat | Mitigation | Requirement |
 |---|---|---|---|
 | T-L1 | Lab server touches the network or real files | No network code in lab servers; suite runs in a network-disabled job; all writes confined to a temp directory | FR-002, NFR-003 |
-| T-L2 | Someone configures a lab server in a real agent by mistake | `bulwark-lab` refuses to start without `BULWARK_LAB=1`; `LAB ONLY` banner on stderr; tool descriptions carry a visible lab marker outside the attack payload | FR-032 |
+| T-L2 | Someone configures a lab server in a real agent by mistake | `bulwark-lab` refuses to start without `BULWARK_LAB=1`; `LAB ONLY` banner on stderr; tool descriptions carry a visible lab marker outside the attack payload | FR-008 |
 | T-L3 | Lab code is reused as an attack toolkit | Only publicly documented techniques; canaries only; no evasion tuning against real products | Hard rule 4 |
 
 ### 7.6 Accepted risks (stated in the README's "Limitations" section)
@@ -643,9 +652,11 @@ flowchart LR
 | AR-7 | Prompt injection itself isn't prevented | NG1: Bulwark limits damage | — |
 | AR-8 | Prompts, resources, and MRTR input requests are **analyzed and audited but not pinned or blocked** in v0.1 (CH-4…CH-6) | Keeps v0.1 small; tool definitions and server metadata are the channels the model sees on every session | Review findings with `audit tail`; pinning and blocking for these channels in v0.2 |
 | AR-9 | Injected instructions inside tool results, resource contents, error messages, or notifications are **not detected** in v0.1 (CH-3, CH-5, CH-8, CH-9); only secrets are redacted | Detecting injection in arbitrary content needs the classifier tier (v0.3); detection is never complete (AR-5) | Egress policy and redaction limit what a hijacked agent can send (M-4); taint tracking in v0.2 |
+| AR-10 | **Path checks are lexical.** `fs_path` is cleaned as a string; Bulwark cannot see the server's filesystem, so symlinks, case-insensitive filesystems (default on macOS), Unicode-normalizing filesystems, and container mounts can make a path that passes the check resolve somewhere else | Resolving paths requires the server's view of the filesystem, which a gateway does not have | Run file servers in a container that mounts only the workspace; treat path rules as defense in depth, not containment |
+| AR-11 | **Exfiltration through allowed destinations.** An egress allowlist cannot stop data sent to an allowed host that accepts user content (an issue tracker, a paste service, a shared document), or encoded in allowed arguments (paths, query strings, file names) | Policy constrains where data goes, not what it means | Keep allowlists narrow; secret redaction (FR-025) catches secret-shaped data; taint tracking in v0.2 blocks egress after sensitive reads |
 
 ### 7.7 Security requirements derived from this model
-These were added to §2 in v0.6: **FR-028** (strict parsing, forward what was inspected), **FR-029** (terminal-safe output), **FR-030** (verify before call), **FR-031** (request ID isolation), **FR-032** (lab binary guard), **NFR-013** (resource limits), **NFR-014** (no network listeners or connections), **NFR-015** (dependency hygiene). Added in v0.7 from the design 02 review: **FR-033** (server metadata pinning), **FR-034** (analysis of prompts, resources, and MRTR input requests), **FR-035** (MRTR retries as full calls), **FR-036** (revision handling); FR-003, FR-021, FR-025, and FR-031 amended.
+These were added to §2 in v0.6: **FR-028** (strict parsing, forward what was inspected), **FR-029** (terminal-safe output), **FR-030** (verify before call), **FR-031** (request ID isolation), **FR-008** (lab binary guard; first drafted as FR-032 and renumbered in v0.8 to fit the suite ID range), **NFR-013** (resource limits), **NFR-014** (no network listeners or connections), **NFR-015** (dependency hygiene). Added in v0.7 from the design 02 review: **FR-033** (server metadata pinning), **FR-034** (analysis of prompts, resources, and MRTR input requests), **FR-035** (MRTR retries as full calls), **FR-036** (revision handling); FR-003, FR-021, FR-025, and FR-031 amended.
 
 ## 8. AI/ML design 📝 (seed notes)
 
@@ -668,17 +679,17 @@ Seed: structured logs, Prometheus metrics (decisions by type, latency histograms
 ## 10. Testing and evaluation strategy 🌱
 
 ### 10.1 Test pyramid
-Unit (analyzers, canonicalization, policy adapters) · property-based and fuzz tests (JSON-RPC parser, framing) · integration (real reference MCP servers) · end-to-end (real MCP clients with scripted agents).
+Unit (analyzers, canonicalization, policy adapters) · property-based tests and Go native fuzzing (JSON-RPC parser, framing, re-serialization round trip; a short fuzz run on every PR, a longer one nightly) · integration (the official Go SDK client and example servers, pinned by version) · end-to-end (replay client + lab servers through the `bulwark` binary). No test uses a real AI client application or a human (NFR-002).
 
 ### 10.2 NFR verification
 Every NFR is checked by a CI job (NFR-002): load/latency test (NFR-004), fault injection (NFR-005), audit tamper tests (NFR-006), network-isolated suite run (NFR-003, NFR-007), double-run determinism check (NFR-008), pipeline timing (NFR-009), OS matrix (NFR-010), scripted quickstart (NFR-011), and release signing (NFR-012).
 
 ### 10.3 Attack suite
-The attack scenarios are built **first** (M1, see §12). Each one starts as a test that the attack succeeds, and each Gateway feature is finished when its scenario is blocked or detected under `enforce`.
+The attack scenarios are built **first** (M1, see §12). Each one starts as a test that the attack succeeds, and each Gateway feature is finished when its scenario is detected under `warn` and blocked under `enforce`, by the control the manifest names.
 
 `lab/` contains deliberately malicious, **harmless** MCP servers. "Exfiltration" goes to the observation log file (§4.2) and "secrets" are fake canaries. Every scenario works with a single upstream server, matching v0.1 scope. All scenarios run under revision 2026-07-28; L-01, L-02, and L-07 also run under 2025-11-25 to cover the compatibility path (FR-036).
 
-| Scenario | Attack (replayed) | Observables under `none` | Blocked or detected in v0.1 by | Later control |
+| Scenario | Attack (replayed) | Observables under `none` | Blocked in v0.1 by (one control per run) | Later control |
 |---|---|---|---|---|
 | L-01 Poisoned description | Hidden `<IMPORTANT>` instruction to read a canary file and pass it to another tool | `poison_delivered`, `canary_exfiltrated` | Analyzer finding → tool hidden (FR-022); path policy (FR-024) | Classifier (v0.3) |
 | L-02 Rug pull | Tool definition changes after the N-th call | `poison_delivered` after change | Pin mismatch → quarantine (FR-021) | — |
@@ -688,6 +699,8 @@ The attack scenarios are built **first** (M1, see §12). Each one starts as a te
 | L-06 Unicode smuggling | Unicode Tag-block characters encode hidden instructions | `poison_delivered` | `unicode.hidden` analyzer (FR-022) | — |
 | L-07 Poisoned server instructions | Server `instructions` (from `server/discover`, or `initialize` under 2025-11-25) tell the agent to read a canary file and send it out; tool definitions are clean | `poison_delivered` | Metadata analyzer finding → instructions stripped (FR-033) | Prompt and resource pinning (v0.2) |
 | L-08 MRTR solicitation | A tool answers with `input_required`, asking for "your API key to continue"; the scripted retry supplies a canary in `inputResponses` | `canary_exfiltrated` | Secret scan of `inputResponses` + policy on the retry (FR-035); input-request finding (FR-034) | Approval broker (v0.2) |
+
+**Attribution, so a test cannot pass for the wrong reason (FR-004):** each "Blocked in v0.1 by" entry above is a separate control. Where a row lists two, the scenario runs once per control with only that control enabled. Canaries come in two shapes: **secret-shaped** (`AKIAEXAMPLE…`, matched by the redaction rules) and **plain** (`canary-plain-…`, a value a unit test proves no secret rule matches). For example, L-04 uses a plain canary to prove the egress allowlist, and a secret-shaped canary sent to an *allowed* host to prove redaction. The CI results table shows which control fired.
 
 **Replay, not live agents:** each scenario runs with the replay client under `none`, `bulwark-warn`, and `bulwark-enforce`, and asserts the expected observables (FR-004). The suite runs on every PR (FR-005). Optional live-model runs are a later feature (FR-046). Existing public resources (`VERIFY:` "Damn Vulnerable MCP Server", MCPTox, MCP-SafetyBench) are reused where licenses allow, mainly as sources of attack patterns and detection corpora.
 
@@ -701,10 +714,20 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 |---|---|---|
 | M0 | Design approved | Design review checklist passed |
 | M1 | **Attack suite + transparent stdio proxy (both revisions) + audit log** | L-01…L-08 run in CI under all conditions; attacks succeed under `none` and (as expected at this stage) also through the passthrough proxy; network-isolation test passes; audit chain verifies |
-| M2 | Pinning (tools and server metadata) + static analyzers on all channels + CLI + detection corpora | L-01, L-02, L-03, L-06, L-07 blocked or detected under `enforce`; detection rate and false-positive rate reported in CI |
-| M3 | Policy engine + argument constraints + secret redaction + MRTR retry checks + demo + release pipeline; **v0.1 release** | All eight scenarios blocked or detected under `enforce`; NFR-004 met; signed release with SBOM; one-command demo; launch write-up drafted for the maintainer to publish |
+| M2 | Pinning (tools and server metadata) + static analyzers on all channels + CLI + detection corpora | L-01, L-02, L-03, L-06, L-07 detected under `warn` and blocked under `enforce`, with the expected control attributed; detection rate and false-positive rate reported in CI |
+| M3 | Policy engine + argument constraints + secret redaction + MRTR retry checks + demo + release pipeline; **v0.1 release** | All eight scenarios detected under `warn` and blocked under `enforce`, each control attributed; NFR-004 met; signed release with SBOM; one-command demo; launch write-up drafted for the maintainer to publish |
 | M4 | Streamable HTTP + multi-server aggregation + taint tracking + approval broker; **v0.2** | New scenarios for HTTP and taint pass |
 | M5 | Classifier tier (CPU, in CI) + OTel/OCSF export + optional live-model mode; **v0.3** | Classifier corpus results in CI |
+
+### 12.1 Delivery estimate and cut line
+The review budget is about one 30-minute PR per week (C-2). Each spec is one spec PR plus two or three code PRs, so the 8 v0.1 specs need about 24–32 review slots: **roughly 6–8 months to v0.1**. Already cut from v0.1 to fit: interactive `ask` prompts (FR-023), entropy-based secret detection (FR-025), and a separate audit spec (merged into spec 002). If the project falls behind, cut next, in this order:
+
+1. macOS from CI except at release (NFR-010 becomes "tested at release")
+2. The container form of the demo (FR-007 keeps `make demo` with the release binary)
+3. Analysis of resource contents and prompts (FR-034 narrows to MRTR input requests; AR-8 widens)
+4. The 2025-11-25 compatibility subset (FR-036 keeps rejecting unsupported revisions; the compatibility path moves to v0.2)
+
+Nothing that backs a README claim is on this list: each cut removes a claim along with the work.
 
 **Why attacks first:** every protection starts as a failing attack test and is finished when that test passes. This is test-driven development applied to security, and it means the README's claims are all backed by CI ([ADR-0001](docs/adr/0001-lab-first-roadmap.md), amended by [ADR-0002](docs/adr/0002-gateway-with-attack-suite.md)).
 
@@ -716,11 +739,14 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | Policy engine | OPA/Rego with a default-deny combiner | Cedar, custom YAML, Go plugins | [ADR-0004](docs/adr/0004-policy-engine.md) |
 | Deployment shape (v0.1) | One process per wrapped server | Aggregating gateway (v0.2) | §4, decision 9 |
 | Lab sink | Observation log file | Loopback HTTP listener (needs networking in tests) | §4.2, decision 10 |
-| Rug-pull detection | Verify before call (gateway-initiated `tools/list`) | Rely on `list_changed` notifications only (misses silent changes) | §4.4, decision 11 |
+| Rug-pull re-check | Gateway-initiated `tools/list` when stale (notification, `ttlMs`, max age); every call opt-in | Every call by default (doubles upstream traffic, disturbs stateful servers, little extra protection); notifications only (misses servers that never notify) | §4.4, decision 11 |
 | Forwarding | Re-serialize the inspected message | Forward original bytes (parser-differential risk, T-01) | §7.4, decision 12 |
 | Protocol revisions | 2026-07-28 primary + 2025-11-25 compatibility, revision-aware, no translation | 2026-07-28 only (breaks with clients and servers still on 2025-11-25); 2025-11-25 only (outdated at launch); translating between revisions (large, error-prone surface) | §1.3, decision 14 |
 | Fingerprint scope | Whole object with an explicit exclude list | Fixed include list of fields (new or overlooked fields bypass pinning, T-18) | §5.1, decision 15 |
 | Non-tool channels | Pin + strip server metadata; analyze and audit prompts, resources, MRTR requests | Tool definitions only (leaves `instructions` open, B2); pin and block every channel in v0.1 (too large for the MVP) | §4.5, decision 16 |
+| Policy subject | Server identity + pin status + configured argument roles | Tool name and argument names alone (server-controlled, S2 in the design 02 review) | §5.3, decision 18 |
+| `ask` in v0.1 | Deny with an `approval_required` audit record | `/dev/tty` prompt (unusable in GUI clients, conflicts with terminal agents) | §7.4 T-12, decision 19 |
+| Suite assertions | Observables + attributed control, one run per control | Observables only (a test can pass because a different control fired) | §10.3, decision 20 |
 | MRTR retries | New `tools/call` through the full pipeline | Treat as continuation of an already-approved call (answers bypass policy, T-16) | §4.4, decision 17 |
 
 ## 14. Decision log and open questions
@@ -738,38 +764,45 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 | 8 | Go for gateway, lab, and suite; MCP baseline 2026-07-28 | Single-binary releases, native OPA, stable official SDK | [ADR-0003](docs/adr/0003-implementation-language.md) | 2026-11-26 |
 | 9 | One gateway process per wrapped server in v0.1 | Simplest model; matches how MCP clients launch stdio servers | — | 2026-11-26 |
 | 10 | Lab sink is an observation log file, not a network listener | Lets the suite run with networking fully disabled | — | 2026-11-26 |
-| 11 | Verify-before-call in `enforce` mode, default every call | Catches silent rug pulls; costs one local round trip | — | 2026-11-26 |
+| 11 | Verify-before-call in `enforce` mode. *Amended v0.8:* re-check when stale (change notification, `ttlMs`, or `pin_recheck_max_age`, default 300 s); every call is opt-in | Definitions reaching the model are already checked on every `tools/list`; the re-check only signals an implementation change, and a malicious server can defeat it (T-06), so it is not worth an extra round trip on every call | — | 2026-11-26 |
 | 12 | Forward re-serialized inspected messages; reject duplicate keys | Closes parser-differential bypasses (T-01) | — | 2026-11-26 |
 | 13 | OPA/Rego with default-deny combiner and gateway-derived attributes | Expressive, testable, widely recognized | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-26 |
 | 14 | Support 2026-07-28 (primary) and 2025-11-25 (compatibility); detect the revision per message; no translation; reject unsupported revisions in `enforce` | 2026-07-28 removed the handshake and server-initiated requests; both revisions will be in use at launch | [ADR-0003](docs/adr/0003-implementation-language.md) (amended) | 2026-11-26 |
 | 15 | Fingerprint the whole tool object (and server metadata), with an explicit exclude list that is empty by default | Fields outside a fixed include list would bypass pinning (T-18) | — | 2026-11-26 |
 | 16 | Inventory all model-visible channels (§4.5); pin and strip server metadata in v0.1; analyze and audit prompts, resources, and MRTR requests; state the rest as accepted risks AR-8, AR-9 | Closes the `instructions` gap without pinning every channel in the MVP; keeps the §1.1 claim honest | — | 2026-11-26 |
 | 17 | An MRTR retry is a new `tools/call` through the full pipeline | The retry carries server-requested data back to the server (T-16) | — | 2026-11-26 |
+| 18 | Policy input carries gateway-supplied server identity and pin status; derived attributes only for configured, pinned argument roles; OPA network and runtime built-ins removed | Tool names and argument meanings are server-controlled; policies must not make network calls (T-19) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-26 |
+| 19 | No interactive prompts in v0.1; `ask` = deny with an `approval_required` audit record | GUI clients have no terminal; terminal agents share theirs (T-12) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-26 |
+| 20 | Suite asserts the control that fired; multi-control scenarios run once per control; plain and secret-shaped canaries; `warn` = detected, `enforce` = blocked | Stops tests passing for the wrong reason | — | 2026-11-26 |
+| 21 | PR CI is Linux only; macOS on merges to `main` and releases | macOS runners cost about 10× Linux on a private repo (C-4) | — | 2026-11-26 |
+| 22 | NFR-004 gated on an in-process benchmark; end-to-end latency reported only | Shared runners are too noisy for an end-to-end latency gate (NFR-008) | — | 2026-11-26 |
+| 23 | v0.1 is 8 specs; interactive `ask` and entropy detection cut; ordered cut line in §12.1 | About 6–8 months at one review per week | — | 2026-11-26 |
+| 24 | Lossless re-serialization: exact numbers, unknown fields kept, lone surrogates rejected; round-trip property and fuzz tests | Re-serializing through floats or dropping fields would corrupt IDs and break transparency (FR-028) | — | 2026-11-26 |
 
 ### 14.2 Open questions
-- Q1 Deny response format: JSON-RPC error vs. tool result with `isError: true` (design 03; test with real clients)
+- Q1 Deny response format: JSON-RPC error vs. tool result with `isError: true` (design 03; decided from the spec and how the official SDKs' client code surfaces each form to the model, checked by automated tests against the SDK client, not by manual testing with real apps)
 - Q2 Pin store location and format details; server identity for stdio (design 03)
 - Q3 Classifier strategy (v0.3)
 
 ## 15. Spec backlog (draft)
+v0.1 is planned as **8 specs** (merged from 10 in v0.8 to fit the review budget, §12.1).
+
 | Spec | Title | Traces to | Milestone |
 |---|---|---|---|
-| 001 | Lab scenarios L-01…L-08 + manifests + observation log | FR-001, FR-002, FR-032, NFR-003 | M1 |
-| 002 | Replay client (both revisions) + scenario runner + CI results table | FR-003, FR-004, FR-005, NFR-008 | M1 |
-| 003 | stdio proxy passthrough + strict JSON-RPC handling + request ID isolation + revision handling | FR-020, FR-028, FR-031, FR-036, NFR-004, NFR-013, NFR-014 | M1 |
-| 004 | Hash-chained audit log + `audit verify/tail` | FR-026, NFR-006 | M1 |
-| 005 | Fingerprinting (tools + server metadata) + pin store + modes + verify-before-call | FR-021, FR-030, FR-033 | M2 |
-| 006 | Static analyzers (first 4) on all channels + detection corpora | FR-022, FR-034, FR-006 | M2 |
-| 007 | `tools` CLI (list/diff/approve/reject) + terminal-safe output | FR-027, FR-029 | M2 |
-| 008 | Policy engine + argument constraints + MRTR retry checks + `policy test` | FR-023, FR-024, FR-035, NFR-005 | M3 |
-| 009 | Secret detection + redaction | FR-025 | M3 |
-| 010 | One-command demo + release pipeline (SBOM, signing, vuln scan) | FR-007, NFR-011, NFR-012, NFR-015 | M3 |
-| 011 | Streamable HTTP + multi-server aggregation | FR-040, FR-041 | M4 |
-| 012 | Taint tracker + taint-aware policy | FR-042 | M4 |
-| 013 | Approval broker | FR-043 | M4 |
-| 014 | Injection classifier tier | FR-044 | M5 |
-| 015 | OTel + OCSF exporters | FR-045 | M5 |
-| 016 | Optional live-model mode | FR-046 | M5 |
+| 001 | Attack suite: lab scenarios L-01…L-08, manifests, observation log, lab guard, replay client (both revisions), runner, CI skeleton and results table | FR-001…FR-005, FR-008, NFR-001, NFR-002, NFR-003, NFR-008, NFR-009, NFR-010 | M1 |
+| 002 | stdio proxy: strict JSON-RPC, request IDs, revision handling; hash-chained audit log + `audit verify/tail`; terminal-safe output | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-006, NFR-007, NFR-013, NFR-014 | M1 |
+| 003 | Fingerprinting (tools + server metadata) + pin store + modes + verify-before-call | FR-021, FR-030, FR-033 | M2 |
+| 004 | Static analyzers (first 4) on all channels + detection corpora | FR-006, FR-022, FR-034 | M2 |
+| 005 | `tools` CLI (list/diff/approve/reject) | FR-027 (reuses FR-029 from spec 002) | M2 |
+| 006 | Policy engine + argument roles + MRTR retry checks + `policy test` | FR-023, FR-024, FR-035, NFR-005 | M3 |
+| 007 | Secret detection + redaction | FR-025 | M3 |
+| 008 | One-command demo + release pipeline (SBOM, signing, vuln scan) | FR-007, NFR-011, NFR-012, NFR-015 | M3 |
+| 009 | Streamable HTTP + multi-server aggregation | FR-040, FR-041 | M4 |
+| 010 | Taint tracker + taint-aware policy | FR-042 | M4 |
+| 011 | Approval broker | FR-043 | M4 |
+| 012 | Injection classifier tier | FR-044 | M5 |
+| 013 | OTel + OCSF exporters | FR-045 | M5 |
+| 014 | Optional live-model mode | FR-046 | M5 |
 
 ## Appendix: References
 - Model Context Protocol specification, revision 2026-07-28: modelcontextprotocol.io/specification/2026-07-28 (changelog not yet checked directly; see §1.3 `VERIFY:` list)
@@ -780,7 +813,7 @@ Seed: local mode (single binary wrapping stdio servers, configured in the agent'
 - OWASP GenAI Security Project: Top 10 for LLM Applications 2026; Top 10 for Agentic Applications (Dec 2025): genai.owasp.org
 - Cloud Security Alliance, *MCP Tool Poisoning and Rug Pull Attacks* whitepaper (May 2026)
 - arXiv 2603.22489: study of tool-poisoning defenses in MCP clients (2026)
-- Debenedetti et al., *Defeating Prompt Injections by Design* (CaMeL), Google DeepMind, 2025 (`VERIFY:` citation)
+- Debenedetti et al., *Defeating Prompt Injections by Design* (CaMeL), 2025, likely arXiv 2503.18813 (`VERIFY:` ID and author affiliations)
 - Simon Willison, "The lethal trifecta for AI agents" (2025)
 - RFC 8785 JSON Canonicalization Scheme; JSON-RPC 2.0 specification
 - MITRE ATLAS: atlas.mitre.org

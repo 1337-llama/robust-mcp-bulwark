@@ -98,7 +98,7 @@ Streamable HTTP transport · multi-server aggregation · session taint tracking 
 
 | Metric | Target | How measured |
 |---|---|---|
-| Attack suite | 100% of scenarios succeed without Bulwark and are blocked or detected with it in `enforce` mode | CI on every PR |
+| Attack suite | 100% of scenarios succeed without Bulwark and are detected with it in `warn` mode and blocked in `enforce` mode, with the blocking control named | CI on every PR |
 | Poisoning detection | ≥ 90% of the MCPTox poisoned-tool subset flagged | Analyzer corpus test in CI |
 | False positives | ≤ 2% of benign real-server tool definitions flagged | Analyzer corpus test in CI |
 | Rug-pull detection | 100% of definition changes detected | Scenario L-02 |
