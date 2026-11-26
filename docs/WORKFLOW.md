@@ -69,15 +69,22 @@ The design document is written **one section at a time**, in the order below. Ea
 Each spec is one vertical slice of functionality, small enough to build in a few focused sessions. Create it from `templates/spec/`:
 
 ```
-specs/001-attack-lab/
+specs/001-attack-suite/
 ├── spec.md    ← WHAT and WHY: user stories, acceptance criteria (EARS format), traced FR/NFR IDs
 ├── plan.md    ← HOW: modules, interfaces, data structures, test approach
 └── tasks.md   ← ordered checklist of small, independently verifiable tasks
 ```
 
-> Create spec `NNN-<slug>` for backlog item "<item>" from `DESIGN.md` §15. Write `spec.md` first and stop for my review. Acceptance criteria must use EARS syntax and trace to FR/NFR IDs.
+### Automated review loop (in use since 2026-11-26)
+The maintainer has delegated the design and spec stages to an automated loop:
 
-Then, after review: "Write `plan.md`." Then: "Write `tasks.md`; each task should take under about an hour, and the test comes before the implementation."
+1. Claude writes a spec's `spec.md`, `plan.md`, and `tasks.md` **together in one PR**. Acceptance criteria use EARS syntax and trace to FR/NFR IDs. Tasks take under about an hour each, with the test first.
+2. A separate, **independent reviewer session** reviews the PR and posts one comment ending in `Verdict: APPROVE` or `Verdict: CHANGES REQUESTED`.
+3. Claude fixes the findings and replies on the PR. If there were blockers, the reviewer re-checks them.
+4. **Who merges:** under the maintainer's standing instruction, Claude merges the PR once the reviewer reports no open blockers. The maintainer can stop the loop at any time, or review and merge a PR themselves. Merging sets the spec to `Ready`.
+5. **The loop stops before Stage 3:** Claude checks in with the maintainer before writing any implementation code.
+
+Without the loop, the original sequence applies: `spec.md` first and stop for review, then `plan.md`, then `tasks.md`.
 
 ## Stage 3: Build
 
