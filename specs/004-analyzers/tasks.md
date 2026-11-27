@@ -4,9 +4,9 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Corpora first, so rules are written against data**
 - [ ] **T1:** `tools/corpus mcptox` (poisoned): convert `pure_tool.json` at a pinned commit to ASCII-escaped JSONL; round-trip test; count test (485). (AC-14, AC-16)
-- [ ] **T2:** Clean-listing parser for `response_all.json`: tests first (single tool, arguments with and without descriptions, repeated listings, a missing name fails), then `clean.jsonl` (353). (AC-14, AC-16)
+- [ ] **T2:** Clean-listing parser for `response_all.json`: tests first (single tool, arguments with and without descriptions, repeated listings, a missing name fails), then `clean.jsonl` (353 matched, 322 after the AC-14a license filter) and `tool_names.json`. (AC-14, AC-14a, AC-16)
 - [ ] **T3:** Record → analyzer input mapping (clean → `Tool`, poisoned → `{name, description}`, cross-reference context), with tests. (AC-15)
-- [ ] **T4:** `NOTICE`, `source.json` (commit and file hashes), the server-grouped split (`split.json`; 20/178/160 asserted), and the CONTRIBUTING.md tuning rule. (AC-14, AC-17)
+- [ ] **T4:** `licenses.json` and `licenses/` (per-server URL, commit, SPDX ID; allowlist test), `NOTICE`, `source.json` (commit and file hashes), the server-grouped split (`split.json`; 20/178/156 asserted), and the CONTRIBUTING.md tuning rule. (AC-14, AC-17)
 - [ ] **T5:** `corpus-provenance.yml` (weekly and dispatch, re-convert, diff); `.gitleaks.toml` allowlist scoped to `testdata/corpora/`. (AC-16a, AC-16b)
 
 **Framework**

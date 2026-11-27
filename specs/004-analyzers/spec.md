@@ -18,7 +18,7 @@ On **tool definitions** and **server metadata**, a high-severity finding hides o
 
 The analyzers are measured honestly. Both corpora come from MCPTox (AAAI 2026, CC BY 4.0), built on the same 45 real-world servers:
 - **detection** is measured against **485 published poisoned tool descriptions**
-- **false positives** are measured against the **353 clean, authentic tool definitions** of those servers
+- **false positives** are measured against the **322 clean, authentic tool definitions** of the 42 servers whose upstream code has a permissive license (MCPTox's license doesn't cover third-party text, AC-14a)
 
 Whole **servers** are held out, so near-duplicate attack templates can't leak across the split. CI reports results on the held-out half only. Four spec 001 attack runs become required: L-01, L-03, L-05, L-06, plus L-07's analyzer run.
 
@@ -65,19 +65,29 @@ Whole **servers** are held out, so near-duplicate attack templates can't leak ac
 - **AC-13:** THE configuration key `analyzers.enabled` SHALL select which analyzers run; `[]` disables all of them (spec 001 AC-27).
 
 **Corpora (FR-006)**
-- **AC-14:** `tools/corpus mcptox` SHALL convert MCPTox at a **pinned commit** into two files:
+- **AC-14:** `tools/corpus mcptox` SHALL convert MCPTox at a **pinned commit** into these files:
   - **`testdata/corpora/mcptox/poisoned.jsonl`:** all 485 records of `pure_tool.json`, each with `id`, `server`, `tool_name`, `paradigm`, `risk`, `description`, and the source commit
-  - **`testdata/corpora/mcptox/clean.jsonl`:** the 353 clean, authentic tools named in `response_all.json` (`servers.<name>.tool_names`). Each record holds `server`, `name`, `description`, and arguments (name, description, required), parsed from that server's clean tool listing. The parser SHALL match every one of the 353 names exactly, de-duplicate repeated listings, and fail on a missing name.
+  - **`testdata/corpora/mcptox/clean.jsonl`:** the clean, authentic tools named in `response_all.json` (`servers.<name>.tool_names`) **for the servers allowed by AC-14a only** (322 tools from 42 servers on the pinned data). Each record holds `server`, `server_url`, `license` (SPDX ID), `name`, `description`, and arguments (name, description, required), parsed from that server's clean tool listing. The parser SHALL match every one of the 353 names of all 45 servers exactly, de-duplicate repeated listings, and fail on a missing name, before filtering.
+  - **`testdata/corpora/mcptox/tool_names.json`:** each of the 45 servers' tool names (identifiers only, no descriptions), used as cross-reference context (AC-15).
 
-  A `NOTICE` file SHALL give the CC BY 4.0 attribution the license asks for: the MCPTox contributors; the paper citation (AAAI 2026, DOI 10.1609/aaai.v40i42.40895); the source repository URL and commit; a link to the license; and the changes made (format conversion and parsing; content unchanged).
+  A `NOTICE` file SHALL give the CC BY 4.0 attribution the license asks for: the MCPTox contributors; the paper citation (AAAI 2026, DOI 10.1609/aaai.v40i42.40895); the source repository URL and commit; a link to the license; and the changes made (format conversion and parsing; content unchanged). It SHALL also list, per included upstream server, its `server_url`, the upstream commit checked, the SPDX license ID, and its copyright line, with the upstream license texts kept verbatim in `testdata/corpora/mcptox/licenses/` (MIT and Apache-2.0 require the notice to travel with copies).
+- **AC-14a (third-party licensing):** MCPTox's CC BY 4.0 grant covers only material its contributors hold rights to; the clean descriptions were copied from 45 third-party servers. `testdata/corpora/mcptox/licenses.json` SHALL record, for each server, `server_url`, the upstream repository and commit checked, the license file path, and the SPDX ID. Only servers whose repository has a license **file** naming MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, or ISC SHALL be included in `clean.jsonl`. A test SHALL fail if `clean.jsonl` contains a server not allowed by `licenses.json`. On the pinned data three servers are excluded:
+
+  | Server | Tools | Reason |
+  |---|---|---|
+  | AdFin | 20 | No license file in the repository |
+  | KeywordsPeopleUse | 4 | ISC is declared only in `package.json`; there is no license file or copyright notice to reproduce |
+  | Prisma | 7 | Source is a documentation page, not a licensed repository |
+
+  The poisoned descriptions are MCPTox's own work (CC BY 4.0), so all 485 stay. `corpus-provenance.yml` (AC-16a) SHALL also re-fetch each license file at its recorded commit and fail if its SPDX classification changes.
 - **AC-15:** EACH corpus record SHALL be turned into analyzer input in a defined way:
   - **Clean tools:** a CH-1 `Tool` object, `{name, description, inputSchema}`, built from the parsed arguments.
   - **Poisoned items:** `{name: tool_name, description}`. MCPTox gives no schema for them, so **`schema.side_channel` is reported as "not measured" for detection.** Its false positives are still measured on the clean tools.
-  - **Cross-reference context** for both corpora is the server's clean tool names.
+  - **Cross-reference context** for both corpora is the server's tool names from `tool_names.json`, including the three excluded servers.
 - **AC-16** (spec 002 AC-34): ALL corpus files SHALL be plain ASCII. Every non-ASCII code point is written as a JSON escape sequence (backslash, `u`, four hex digits), which is lossless, so the hidden-character check applies with no exemptions. A test SHALL show that decoding reproduces the source strings exactly.
 - **AC-16a (provenance, no maintainer step):** A `corpus-provenance.yml` workflow SHALL run on `workflow_dispatch` and weekly, with network allowed in that job only. It downloads the pinned MCPTox files, re-runs the conversion, and fails if the result differs from the committed corpus.
 - **AC-16b:** THE repository's `gitleaks` configuration SHALL allowlist `testdata/corpora/` only (scoped, with a comment), because MCPTox contains published, fake key-shaped strings. No other path is exempt.
-- **AC-17:** THE split SHALL be **by server**: held-out = lowest bit of SHA-256(`server`) is 1. Both corpora use the same function, so a held-out server's poisoned and clean tools are both held out. On the pinned data this holds out 20 of 45 servers (178 poisoned, 160 clean; all three paradigms present). Rules are written and tuned against the tuning half only, as stated in CONTRIBUTING.md. A test fixes the split.
+- **AC-17:** THE split SHALL be **by server**: held-out = `sha256(server)[0] & 1 == 1`, the low bit of the **first** byte of the SHA-256 digest of the UTF-8 server name. Both corpora use the same function, so a held-out server's poisoned and clean tools are both held out. On the pinned data this holds out 20 of 45 servers (178 poisoned and 156 clean tools; all three paradigms present; one excluded server, KeywordsPeopleUse, is in the held-out half). Rules are written and tuned against the tuning half only, as stated in CONTRIBUTING.md. A test fixes the split.
 - **AC-18:** CI SHALL report, on the **held-out** halves, each with a **Wilson 95 % interval**:
   - **detection rate:** poisoned items with at least one finding of severity ≥ `medium`
   - **hide rate:** poisoned items with at least one `high` finding
