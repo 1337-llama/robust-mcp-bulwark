@@ -11,7 +11,7 @@
 | `internal/registry/state.go` | New | Computes per-item state from pins + observations (AC-4) |
 | `internal/diff/` | New | Structural JSON diff with JSON Pointer paths; line diff for long strings |
 | `cmd/bulwark/tools.go` | New | `list`, `diff`, `approve`, `reject`, flags, exit codes, `--json` |
-| `internal/audit/cli.go` | New | Per-invocation CLI audit chain (AC-14) |
+| `internal/audit/cli.go` | New | Per-server CLI audit chain, appended under the lock (AC-14) |
 | `lab/suite/setup.go` | Changed | Observation pass (analyzers off), then `tools approve --fingerprint` per `setup` (AC-18) |
 | DESIGN.md §6.1, §6.4 | Changed | CLI flags; observation file next to the pins file |
 
@@ -20,7 +20,7 @@
 bulwark tools list    --server-id ID [--json]                                   exit 0 | 3
 bulwark tools diff    --server-id ID [TOOL | --metadata]
 bulwark tools approve --server-id ID (TOOL | --metadata) [--fingerprint sha256:…]
-bulwark tools approve --server-id ID --all --yes-i-reviewed --fingerprints FILE
+bulwark tools approve --server-id ID --all --fingerprints FILE
 bulwark tools reject  --server-id ID (TOOL | --metadata)
 ```
 
@@ -64,9 +64,9 @@ The command row of `tools list` is `approved` when the digests match and `change
 |---|---|---|
 | AC-1–AC-3 | Unit and integration: the observation file is written in `warn`/`enforce`; pins-file bytes are unchanged; a second listing without a tool drops it and keeps `first_seen` for the rest; an unchanged listing causes no write; 1,001 tools → bounded with `limit_exceeded`, then a 3-tool listing records all 3 | `internal/registry/observed_test.go`, `internal/proxy/observe_test.go` |
 | AC-4, AC-5 | Exhaustive table test of the state rows and their precedence; golden `list` output (text and JSON) for every state, including the command row; exit codes | `cmd/bulwark/tools_list_test.go` |
-| AC-6–AC-8 | Golden diffs (field change, new property, removed annotation, long description) and the hostile-string golden test | `internal/diff/diff_test.go`, `cmd/bulwark/tools_diff_test.go` |
+| AC-6–AC-8 | Golden diffs (field change, new property, removed annotation, long description, roles beside properties, `roles.unknown_param`) and the hostile-string golden test | `internal/diff/diff_test.go`, `cmd/bulwark/tools_diff_test.go` |
 | AC-9–AC-13 | Approve with a matching or stale `--fingerprint`; a snapshot edited on disk so it no longer matches its stored fingerprint → refused; `--command` approval leaves tool pins untouched, and a tool approval leaves `command_digest` untouched; interactive confirmation through a pseudo-terminal on `/dev/tty` (`github.com/creack/pty`, MIT, test-only), and piped stdin can't confirm; non-interactive refusal; the `--all` guard rails (never includes the command); reject; metadata | `cmd/bulwark/tools_approve_test.go` |
-| AC-14 | The CLI audit chain verifies with `audit verify` | `internal/audit/cli_test.go` |
+| AC-14 | The CLI audit chain verifies with `audit verify`, including after two concurrent CLI invocations | `internal/audit/cli_test.go` |
 | AC-15 | Integration: gateway running in `enforce`, the CLI approves, the client's next `tools/list` includes the tool within about 1 s; with a listen stream, the client gets `list_changed` | `internal/proxy/approve_live_test.go` |
 | AC-16, AC-17 | Permission refusal; network check (no `net` imports, and the CLI runs under the suite's syscall trace) | `cmd/bulwark/tools_perm_test.go`, `tools/meta` |
 | AC-18 | The suite passes with setup through the CLI approval path; every seeded pin has empty `findings_at_approval`; the runner never writes the pins file; every `policy:` run's decision input carries its `setup.arg_roles` | `lab/suite/setup_test.go` |
@@ -75,5 +75,5 @@ The command row of `tools list` is `approved` when the digests match and `change
 | Risk | Mitigation |
 |---|---|
 | The observation file grows without bound, or a hostile server fills it once to lock out real tools | Each listing replaces the set, with per-listing caps (AC-1, AC-3) |
-| An operator approves blindly with `--all` | Requires `--yes-i-reviewed` and a fingerprints file (AC-11) |
+| An operator approves blindly with `--all` | Requires a fingerprints file, and approves only items that still match it (AC-11) |
 | A pseudo-terminal test library adds a dependency | Test-only, MIT, pinned; production code has no dependency on it |
