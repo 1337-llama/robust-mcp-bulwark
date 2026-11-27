@@ -25,7 +25,6 @@ type ToolPin struct {
 	Fingerprint        string          `json:"fingerprint"`
 	Snapshot           json.RawMessage `json:"snapshot"`          // as received, for diffs (spec 005)
 	ExcludeFields      []string        `json:"exclude_fields"`
-	ArgRoles           map[string]string `json:"arg_roles"`
 	Status             Status          `json:"status"`
 	ApprovedAt         string          `json:"approved_at,omitempty"`
 	FindingsAtApproval []Finding       `json:"findings_at_approval"`

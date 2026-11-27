@@ -4,8 +4,8 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.7 |
-| Last updated | 2026-11-26 |
+| Version | 0.11.8 |
+| Last updated | 2026-11-27 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
 
@@ -28,7 +28,8 @@
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 | 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
 | 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins. Re-check fix: the age threshold is never below `pin_recheck_min_age`, and pin-store changes use the 1 s event tier |
-| 0.11.7 | 2026-11-27 | Spec 004: benign corpus is MCPTox's clean tools from the 42 permissively licensed servers (322); server-grouped split; Wilson intervals (§5.4). (0.11.6 is reserved for spec 005's changes, which merge after this one) |
+| 0.11.7 | 2026-11-27 | Spec 004: benign corpus is MCPTox's clean tools from the 42 permissively licensed servers (322); server-grouped split; Wilson intervals (§5.4). (0.11.6 was not used: spec 005's changes merged after this one, as 0.11.8) |
+| 0.11.8 | 2026-11-27 | Spec 005: observation file separate from the pins file (§6.4); `tools` CLI flags with fingerprint-checked approval, and `approve --command` for a changed `command_digest` (§6.1); `arg_roles` come from configuration only and are no longer stored in pins (§5.6, §6.3, §6.4; decision 39) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -565,7 +566,7 @@ Decision input (v0.1):
 }
 ```
 
-`server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from configuration and is pinned with the tool.
+`server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from the operator's configuration, which is trusted like the policy files. It is **not** stored in the pin: a second copy could only go stale (decision 39). The configuration digest is in the audit log's `start` record.
 
 Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. If a declared role's derived value is missing (for example, the URL didn't parse), the rule **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
 
@@ -662,10 +663,12 @@ MRTR applies to all three methods that may return `input_required` under 2026-07
 ### 6.1 CLI (v0.1)
 ```
 bulwark wrap    [--server-id ID] [--mode learn|warn|enforce] [--config FILE] [--state-dir DIR] -- <command> [args...]
-bulwark tools   list    --server-id ID [--json]
-bulwark tools   diff    --server-id ID [TOOL]
-bulwark tools   approve --server-id ID (TOOL... | --all | --metadata)
-bulwark tools   reject  --server-id ID TOOL...
+bulwark tools   list    --server-id ID [--json]                            # exit 3 if anything needs review
+bulwark tools   diff    --server-id ID [TOOL | --metadata]
+bulwark tools   approve --server-id ID (TOOL | --metadata) [--fingerprint sha256:…]
+bulwark tools   approve --server-id ID --all --fingerprints FILE
+bulwark tools   reject  --server-id ID (TOOL | --metadata)
+bulwark tools   approve --server-id ID --command --fingerprint sha256:…      # after the server's command_digest changed
 bulwark policy  test    [--policy-dir DIR]... [--input FILE]
 bulwark audit   verify  [--server-id ID | FILE...]
 bulwark audit   tail    [--server-id ID] [--event TYPE] [--follow] [--json]
@@ -704,7 +707,7 @@ servers:                       # keyed by --server-id
     mode: enforce
     pin_recheck_max_age: 300s
     pin_recheck_min_age: 30s
-    arg_roles:                 # pinned with each tool; changes are audited
+    arg_roles:                 # trusted operator input; not stored in pins (decision 39)
       read_file:  { path: fs_path }
       write_file: { path: fs_path }
   web:
@@ -742,7 +745,6 @@ limits:
       "fingerprint": "sha256:…",
       "snapshot": {"name": "read_file", "description": "…", "inputSchema": {}},
       "exclude_fields": [],
-      "arg_roles": {"path": "fs_path"},
       "status": "approved",
       "approved_at": "2026-12-01T10:00:00Z",
       "findings_at_approval": []
@@ -750,7 +752,9 @@ limits:
   }
 }
 ```
-`status` is `approved`, `rejected`, or `pending`. Approval happens only through the CLI, never through MCP.
+`status` is `approved`, `rejected`, or `pending`. Approval happens only through the CLI (or `learn` mode), never through MCP.
+
+**Observation file** (`pins/<server_id>.observed.json`, spec 005): the gateway writes what it **observed**: the `command` (digest, argv, executable path and hash), and per tool and for the metadata the latest fingerprint, snapshot, `first_seen`, and findings, plus duplicate names. Each complete listing replaces the tool set; the file is written only when something changed, and each listing is capped at 1,000 tools and 16 MiB. The gateway never writes the pins file outside `learn` mode, so server-supplied data reaches the pins file only through an explicit, fingerprint-checked approval (`tools approve --fingerprint`).
 
 ### 6.5 Audit record
 ```json
@@ -1115,6 +1119,7 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 36 | MRTR checks (secrets, unsolicited, unmatched) apply to `tools/call`, `prompts/get`, and `resources/read` retries, enforced by the gateway before policy | All three methods can return `input_required` under 2026-07-28; checking only `tools/call` left M-9 open (review S1) | — | 2026-11-26 |
 | 37 | Pin re-checks are rate-limited by `pin_recheck_min_age` (default 30 s) | A tiny `ttlMs` or a stream of change notifications must not force a re-check per call (review S5) | — | 2026-11-26 |
 | 38 | Audit records store keyed HMAC-SHA-256 argument values, not plain hashes | Plain hashes of short arguments can be reversed by guessing (review N3) | — | 2026-11-26 |
+| 39 | `arg_roles` are read from configuration at decision time and are not stored in pins | The reason to declare roles is that the server picks argument names; operator configuration already answers that. A pinned copy added no protection and went stale under spec 005's write rules (review B2 on PR #8) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-27 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:
