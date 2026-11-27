@@ -6,7 +6,7 @@ This spec adds almost no code: the demo reuses the suite runner (spec 001) and `
 ## Modules and files
 | Path | New/Changed | Responsibility |
 |---|---|---|
-| `lab/demo/demo.sh`, `Makefile` (`demo` target) | New | AC-1, AC-2: run the suite in `none` + `enforce`, print the table, show the L-02 diff |
+| `cmd/bulwark-lab` `demo` subcommand, `lab/demo/demo.sh`, `Makefile` (`demo` target) | New | AC-1, AC-2: run the suite in `none` + `enforce`, print the table, show the L-02 diff |
 | `tools/ci-summary` | Changed | `--compare results.json`: the demo table equals the suite cells (AC-3) |
 | `.goreleaser.yaml` | New | Two archives (user, demo), reproducible flags, SBOMs (AC-4–AC-6) |
 | `.github/workflows/release.yml` | New | Tag → build, sign, attest, reproducibility job, `govulncheck`, quickstart job (AC-5–AC-8, AC-11) |

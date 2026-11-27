@@ -70,7 +70,7 @@ Why this approach? See [ADR-0001](docs/adr/0001-lab-first-roadmap.md) and [ADR-0
 
 ## Safety
 
-The attack lab (`lab/`) contains **intentionally malicious MCP servers for testing only**. They use fake canary secrets, record "exfiltrated" data only to a local log file, and make no network calls at all (CI fails if any process opens an internet socket). Don't connect them to agents that have access to real data.
+The attack lab (`lab/`) contains **intentionally malicious MCP servers for testing only**. They use fake canary secrets, record "exfiltrated" data only to a local log file, and make no network calls at all. Once the suite is built, Linux CI will fail if any process opens an internet socket. Don't connect them to agents that have access to real data.
 
 ## License
 

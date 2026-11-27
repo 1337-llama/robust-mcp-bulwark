@@ -2,7 +2,7 @@
 
 Each task takes under about an hour and can be verified on its own.
 
-- [ ] **T1:** `demo.sh` and `make demo` (table and L-02 diff); `ci-summary --compare`. (AC-1–AC-3)
+- [ ] **T1:** `bulwark-lab demo`, `demo.sh`, and `make demo` (table and L-02 diff); `ci-summary --compare`. (AC-1–AC-3)
 - [ ] **T2:** `.goreleaser.yaml` with the two archives, reproducible flags, and SBOMs; the archive-listing check. (AC-4, AC-5, AC-6)
 - [ ] **T3:** `ci.yml`: snapshot build plus the demo checks; `govulncheck`, dependency review, and gitleaks. (AC-9, AC-10)
 - [ ] **T4:** `release.yml`: build, cosign keyless signing, attestations, `govulncheck`. (AC-5, AC-6, AC-11)
