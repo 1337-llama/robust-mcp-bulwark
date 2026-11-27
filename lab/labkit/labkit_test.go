@@ -1,4 +1,4 @@
-// LAB ONLY: test helpers for the harmless attack lab. See lab/README.md.
+// LAB ONLY: test helpers for the harmless attack lab. See DESIGN.md §5.9.
 package labkit
 
 import (
@@ -23,6 +23,7 @@ func TestCanaries(t *testing.T) {
 	}
 }
 
+// Verifies: FR-002
 func TestFound(t *testing.T) {
 	c := map[string]string{"plain": "canary-plain-l04", "secret": "AKIAEXAMPLECANARYLDZ"}
 	got := Found("x AKIAEXAMPLECANARYLDZ y canary-plain-l04", c)
