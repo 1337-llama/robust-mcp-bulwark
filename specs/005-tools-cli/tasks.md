@@ -22,7 +22,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Integration**
 - [ ] **T13:** Live approval: gateway in `enforce`; approve; the client sees the tool within about 1 s, and gets a notification with a listen stream. (AC-15)
-- [ ] **T14:** The suite's setup goes through the store API; the suite passes. (AC-18)
+- [ ] **T14:** The suite's setup uses an observation pass (analyzers off) and `tools approve --fingerprint`; test that seeded pins accept no findings; the suite passes. (AC-18)
 
 **Close-out**
 - [ ] **T15:** DESIGN.md §6.1/§6.4 and README (operator workflow: `list` → `diff` → `approve --fingerprint`). (docs)

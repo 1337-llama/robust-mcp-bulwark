@@ -12,7 +12,7 @@
 | `internal/diff/` | New | Structural JSON diff with JSON Pointer paths; line diff for long strings |
 | `cmd/bulwark/tools.go` | New | `list`, `diff`, `approve`, `reject`, flags, exit codes, `--json` |
 | `internal/audit/cli.go` | New | Per-invocation CLI audit chain (AC-14) |
-| `lab/suite/setup.go` | Changed | Approvals through the store API (AC-18) |
+| `lab/suite/setup.go` | Changed | Observation pass (analyzers off), then `tools approve --fingerprint` per `setup` (AC-18) |
 | DESIGN.md §6.1, §6.4 | Changed | CLI flags; observation file next to the pins file |
 
 ## Interfaces and data structures
@@ -65,7 +65,7 @@ bulwark tools reject  --server-id ID (TOOL | --metadata)
 | AC-14 | The CLI audit chain verifies with `audit verify` | `internal/audit/cli_test.go` |
 | AC-15 | Integration: gateway running in `enforce`, the CLI approves, the client's next `tools/list` includes the tool within about 1 s; with a listen stream, the client gets `list_changed` | `internal/proxy/approve_live_test.go` |
 | AC-16, AC-17 | Permission refusal; network check (no `net` imports, and the CLI runs under the suite's syscall trace) | `cmd/bulwark/tools_perm_test.go`, `tools/meta` |
-| AC-18 | The suite passes with setup through the store API | `lab/suite` |
+| AC-18 | The suite passes with setup through the CLI approval path; every seeded pin has empty `findings_at_approval`; the runner never writes the pins file | `lab/suite/setup_test.go` |
 
 ## Risks and mitigations
 | Risk | Mitigation |

@@ -60,7 +60,7 @@ When this spec is done, the README's results table exists. Every "Without Bulwar
 
 **Run setup and integrity of the evidence**
 - **AC-27** (FR-004): WHEN a `warn` or `enforce` cell starts, THE runner SHALL:
-  1. seed the pin store as the run's `setup` says, using a preliminary `learn`-mode pass (`approve: all | none | [tool names]`, `approve_metadata: true | false`)
+  1. seed the pin store as the run's `setup` says (`approve: all | none | [tool names]`, `approve_metadata: true | false`): a preliminary observation pass, then `bulwark tools approve --fingerprint` for each approved item (amended by spec 005 AC-18; originally a `learn`-mode pass)
   2. start Bulwark with a generated configuration that enables **only** the run's control: other analyzers disabled, no operator policy files except the run's own, and secret and MRTR checks in audit-only mode unless they are the control.
 - **AC-28** (FR-004): IF a run's control is not a `pin:` control, and its `setup` leaves any tool the replay calls, or the server metadata, unapproved, THEN manifest validation SHALL fail. Otherwise pinning, not the named control, would block the attack.
 - **AC-29** (FR-004): THE `meta` job SHALL fail IF a spec whose status is `Done` is still named in any manifest's `pending:` field, so pending tests can't be forgotten.

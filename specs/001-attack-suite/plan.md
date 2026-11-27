@@ -67,7 +67,7 @@ runs:
   - control: policy:http-allowlist
     pending: spec-006
     setup:
-      approve: all                 # pins seeded by a learn pass, so pinning stays silent (AC-27, AC-28)
+      approve: all                 # pins seeded by an observation pass + approve, so pinning stays silent (AC-27, AC-28)
       approve_metadata: true
       arg_roles: {http_post: {url: egress_url}}
       policy: lab/policies/l04-http-allowlist.rego.tmpl   # rendered with {{lab_dir}}
@@ -96,7 +96,7 @@ Every request gets a fresh integer `id`. `{{canaries.<name>}}` and `{{lab_dir}}`
 
 For a `warn` or `enforce` cell, the runner:
 1. Renders the run's policy template (if any) with `{{lab_dir}}`.
-2. Runs a **learn pass**: Bulwark in `learn` mode, replay steps `discover` and `list_tools` only, then exit. This seeds the pin store with the server's *initial* definitions. Then, per `setup`, it marks tools and metadata `approved` or leaves them `pending`, using the pin store format in DESIGN.md §6.4.
+2. Runs an **observation pass**: Bulwark in `warn` mode with analyzers disabled (so approvals accept no findings), replay steps `discover` and `list_tools` only, then exit. This records the server's *initial* definitions in the observation file (spec 005 AC-1). Then, per `setup`, it runs `bulwark tools approve --fingerprint` for each tool and the metadata to approve; everything else stays unpinned. (Amended by spec 005 AC-18; before spec 005 lands, a `learn` pass followed by direct pin-store edits does the same job.)
 3. Writes a Bulwark configuration that enables only the run's control:
 
 | Control kind | `analyzers.enabled` | Operator policy | `secrets.requests` | `mrtr.mode` |
@@ -112,6 +112,8 @@ For a `warn` or `enforce` cell, the runner:
 The three configuration keys are added to DESIGN.md §6.3 in this PR. Each control's spec implements its key.
 
 ## Scenario designs
+**Payload files (amended by spec 004, AC-20):** each lab server's attack text lives in `lab/servers/<server>/payload.txt`, based on a cited public example (AC-8; for instance a matching MCPTox item), and loaded by the server at start. Payloads are frozen once spec 001 is done. A `meta` check rejects a PR that changes both a payload and the analyzer rules, so neither is fitted to the other.
+
 Every tool description and server name carries `[LAB]` (AC-7). Every payload carries `POISON-Lxx`.
 
 | ID | Lab server | What the server does | Replay (hijacked agent) | Required under `none` | Control runs (pending until) |
@@ -155,7 +157,7 @@ All jobs set `timeout-minutes: 10` and `permissions: contents: read`. Every acti
 | AC-21 | Unit (trace parser on fixture traces: clean; `socket(AF_INET…)`; `socket(AF_INET6…)`; interleaved multi-PID output; `AF_UNIX` allowed) | `tools/meta/trace_test.go` |
 | AC-22, AC-23, AC-24 | Workflow configuration, checked by the `meta` job | `tools/meta/workflows_test.go` |
 | AC-25, AC-26, AC-29 | Unit (fixtures with bad labels, unpinned `actions/*` and third-party actions, uncovered IDs, a `Done` spec still named in `pending:`) | `tools/meta/meta_test.go` |
-| AC-27, AC-28 | Unit (generated configuration per control kind; learn-pass seeding against a fake pin store; validation rejects unseeded non-pin runs) | `lab/suite/setup_test.go` |
+| AC-27, AC-28 | Unit (generated configuration per control kind; observation-pass seeding and approval against a fake pin store; validation rejects unseeded non-pin runs) | `lab/suite/setup_test.go` |
 | AC-30 | Unit (UID check, enabled when `CI=true`) plus the CI invocation | `lab/suite/suite_test.go` |
 | AC-31 | Unit (secret canary shape; plain canary matches no pattern) | `lab/labkit/canary_test.go` |
 

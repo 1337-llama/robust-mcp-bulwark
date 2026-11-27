@@ -33,7 +33,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Runner**
 - [ ] **T20:** `lab/suite/expect.go`: observables, pending logic, control matching with `analyzer:<name>/*` patterns, tested against fixture audit logs. Tests first. (AC-16, AC-17)
-- [ ] **T21:** `lab/suite/setup.go`: policy template rendering, learn-pass seeding, and generated configuration per control kind (plan.md table). Tested against a fake pin store, since the real gateway arrives in spec 002. (AC-27)
+- [ ] **T21:** `lab/suite/setup.go`: policy template rendering, observation-pass seeding with approval (spec 005 AC-18), and generated configuration per control kind (plan.md table). Tested against a fake pin store, since the real gateway arrives in spec 002. (AC-27)
 - [ ] **T22:** Write the eight manifests `L-01.yaml` … `L-08.yaml` and the lab policy templates; every `warn`/`enforce` expectation `pending: spec-NNN` as listed in plan.md. (AC-1, AC-18, AC-31)
 - [ ] **T23:** `lab/suite/suite_test.go`: matrix (scenario × run × condition × revision), fresh temp directory and processes per cell, `results.json`, UID check under `CI=true`. All `none` cells must pass. (AC-15, AC-18, AC-19, AC-30)
 

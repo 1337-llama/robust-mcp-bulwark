@@ -50,7 +50,7 @@ This is the operator's side of pinning: `bulwark tools list | diff | approve | r
 - **AC-17:** `tools` commands SHALL never contact the upstream server or the network. They read only the state files (NFR-014).
 
 **Suite**
-- **AC-18:** THE spec 001 run setup (AC-27) SHALL switch from writing the pins file directly to calling the store API used by the CLI, so the suite exercises the same approval path operators use.
+- **AC-18:** THE spec 001 run setup (AC-27) SHALL seed pins the way an operator does. It runs a preliminary **observation pass** (Bulwark in `warn` mode with `analyzers.enabled: []`, replay steps `discover` and `list_tools` only), which writes only the observation file (AC-1). Analyzers are off in this pass so that the approvals record **no** findings; otherwise `approve` would accept the very findings an analyzer run must catch (as spec 004 AC-12 ensures for `learn`). A suite test SHALL assert that every seeded pin has an empty `findings_at_approval`. It then runs `bulwark tools approve --fingerprint` for each item that `setup` approves. Items not approved stay unpinned (`pin:unapproved`). The runner SHALL NOT write the pins file itself, so the suite exercises the same approval path operators use.
 
 ## Out of scope
 Editing `exclude_fields` or `arg_roles` from the CLI. `exclude_fields` is edited in the pins file by hand; `arg_roles` live in the configuration. A TUI. Remote or multi-host pin management.
