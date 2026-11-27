@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.8 |
+| Version | 0.11.9 |
 | Last updated | 2026-11-27 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -30,6 +30,7 @@
 | 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins. Re-check fix: the age threshold is never below `pin_recheck_min_age`, and pin-store changes use the 1 s event tier |
 | 0.11.7 | 2026-11-27 | Spec 004: benign corpus is MCPTox's clean tools from the 42 permissively licensed servers (322); server-grouped split; Wilson intervals (§5.4). (0.11.6 was not used: spec 005's changes merged after this one, as 0.11.8) |
 | 0.11.8 | 2026-11-27 | Spec 005: observation file separate from the pins file (§6.4); `tools` CLI flags with fingerprint-checked approval, and `approve --command` for a changed `command_digest` (§6.1); `arg_roles` come from configuration only and are no longer stored in pins (§5.6, §6.3, §6.4; decision 39) |
+| 0.11.9 | 2026-11-27 | Spec 006: derived values are lists of objects with `null` for unparseable or absent values; no IDNA; policies type-checked against the input schema; a policy load error stops `wrap` in every mode; `-32011` for blocked MRTR retries on prompts and resources (§5.6, §6.6; decisions 40–42) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -560,7 +561,7 @@ Decision input (v0.1):
   "tool": {"name": "http_post", "pin_status": "approved", "arg_roles": {"url": "egress_url"}, "annotations": {"readOnlyHint": false}},
   "arguments": {"url": "https://api.example.com/v1/upload", "body": "…"},
   "request": {"revision": "2026-07-28", "is_retry": false, "input_responses": null},
-  "derived": {"egress_url": {"scheme": "https", "host": "api.example.com"}, "fs_path": null, "args_bytes": 812},
+  "derived": {"egress_url": [{"scheme": "https", "host": "api.example.com", "port": null}], "fs_path": [], "recipient": [], "args_bytes": 812},
   "findings": [{"analyzer": "text.imperative", "severity": "medium", "location": "/arguments/body"}],
   "mode": "enforce"
 }
@@ -568,7 +569,7 @@ Decision input (v0.1):
 
 `server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from the operator's configuration, which is trusted like the policy files. It is **not** stored in the pin: a second copy could only go stale (decision 39). The configuration digest is in the audit log's `start` record.
 
-Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. If a declared role's derived value is missing (for example, the URL didn't parse), the rule **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
+Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. Each `derived.<role>` is a list with one element per value (decision 40). An element is `null` when the value didn't parse or a **required** declared argument is absent, and the rule then **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
 
 ```rego
 package bulwark.authz
@@ -577,28 +578,28 @@ package bulwark.authz
 
 # Restrictions are keyed on the server and the declared argument role, not on
 # tool names (the server picks those). Each check is a named helper rule used as
-# `not helper`: if the derived value is missing (unparseable URL, relative path),
-# the helper is undefined, `not` is true, and the call is denied. (Writing
-# `not input.derived.egress_url.host in {...}` inline does NOT fail closed: with a
-# missing host the whole expression is undefined and the rule never fires.)
+# `not helper(x)`: for a null element (unparseable or absent value) the helper is
+# undefined, `not` is true, and the call is denied. (Writing `not u.host in {...}`
+# inline does NOT fail closed: with u null the whole rule body is undefined and
+# the rule never fires. Verified on OPA v1.22.4, spec 006.)
 
 # Arguments declared as fs_path on the "fs" server must stay inside the workspace.
 deny contains "fs-workspace-only" if {
 	input.server.id == "fs"
-	"fs_path" in {r | some r in input.tool.arg_roles}
-	not fs_path_ok
+	some p in input.derived.fs_path
+	not path_ok(p)
 }
 
-fs_path_ok if startswith(input.derived.fs_path, "/workspace/")
+path_ok(p) if startswith(p.path, "/workspace/")
 
 # Arguments declared as egress_url on the "web" server must target an approved host.
 deny contains "http-allowlist" if {
 	input.server.id == "web"
-	"egress_url" in {r | some r in input.tool.arg_roles}
-	not egress_host_ok
+	some u in input.derived.egress_url
+	not host_ok(u)
 }
 
-egress_host_ok if input.derived.egress_url.host in {"api.example.com"}
+host_ok(u) if u.host in {"api.example.com"}
 
 # On these servers, a tool runs only after its arguments were reviewed: it declares
 # roles, or the operator listed it as having no sensitive arguments. A tool approved
@@ -610,14 +611,14 @@ deny contains "roles-reviewed" if {
 }
 ```
 
-Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **with the baseline allow enabled**; the right rule ID is reported; a missing derived value denies; and a policy using a removed built-in fails to load.
+Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **with the baseline allow enabled**; the right rule ID is reported; a `null` element denies; and a policy using a removed built-in fails to load. Policies are also type-checked against the input schema at load time, so a misspelled field fails to load instead of never matching (decision 42).
 
-**Derived attributes** are computed only for declared roles:
-| Role | Derived value | Notes |
+**Derived attributes** are computed only for declared roles, as lists (one element per string value; array arguments give one per item). An element is `null` when the value doesn't parse or a required (per the pinned `inputSchema`) declared argument is absent:
+| Role | Element | `null` when |
 |---|---|---|
-| `fs_path` | `path.Clean` of the absolute path; relative paths are rejected | Lexical only (AR-10) |
-| `egress_url` | Scheme, lowercased host (IDNA to ASCII), port | Unparseable URLs get `null`, so deny rules on that role fire (fail closed) |
-| `recipient` | Lowercased address and domain | For email-like tools |
+| `fs_path` | `{"path"}`: `path.Clean` of the absolute path | Not a string, relative, or contains NUL. Lexical only (AR-10) |
+| `egress_url` | `{"scheme", "host" (lowercased), "port"}`, parsed with `net/url` | No scheme or host, or a non-ASCII host. Allowlists use punycode; there is no IDNA conversion (decision 41) |
+| `recipient` | `{"address", "domain"}`, lowercased | Not exactly one `@`, an empty side, or non-ASCII |
 
 ### 5.7 Multi Round-Trip Requests (FR-035)
 MRTR applies to all three methods that may return `input_required` under 2026-07-28: `tools/call`, `prompts/get`, and `resources/read`. Bulwark handles all three the same way.
@@ -785,11 +786,12 @@ limits:
 | Situation | Response to the sender | Why this form |
 |---|---|---|
 | Call to a hidden or unapproved tool | JSON-RPC error `-32602`, message `Unknown tool: <name>` | The same answer a server gives for a tool it doesn't list (MCP 2026-07-28 tools spec; Go SDK uses the same code), so hiding doesn't leak the tool's existence |
-| Policy deny or `approval_required` | **Tool result** with `isError: true` (and `resultType: "complete"` under 2026-07-28); text: `Blocked by MCP Bulwark (policy <id>). The call was not sent to the server.` | The spec says clients SHOULD show tool execution errors to the model, so it can adjust instead of retrying blindly. The text contains only operator-defined IDs, never request data |
+| Policy deny or `approval_required` | **Tool result** with `isError: true` (and `resultType: "complete"` under 2026-07-28); text: `Blocked by MCP Bulwark (<control>). The call was not sent to the server.` (for example `policy:http-allowlist`; MRTR blocks on `tools/call` use the same form) | The spec says clients SHOULD show tool execution errors to the model, so it can adjust instead of retrying blindly. The text contains only operator-defined IDs, never request data |
 | Unknown or unsupported revision (`enforce`) | JSON-RPC error `-32022` `UnsupportedProtocolVersionError` with the supported list | Code reserved by the 2026-07-28 specification |
 | Line that is not valid JSON | JSON-RPC error `-32700` (Parse error), `id: null` | JSON-RPC 2.0 §5.1 |
 | Duplicate keys, invalid UTF-8, lone surrogates | JSON-RPC error `-32600` (Invalid Request) | Valid-JSON-but-rejected messages; `-32700` only for unparseable lines |
 | Size, depth, or outstanding-request limit | JSON-RPC error `-32010` (implementation-defined range `-32000…-32019`) | Distinguishable in logs from spec errors |
+| Blocked MRTR retry on `prompts/get` or `resources/read` | JSON-RPC error `-32011`, message `Blocked by MCP Bulwark (<control>)` | These methods have no `isError` result; a code of its own in the implementation-defined range keeps it apart from `-32010` limits |
 | Server-originated request under 2026-07-28 (`enforce`) | Not forwarded; the server gets `-32601` (Method not found) | The spec forbids servers writing requests on stdio |
 
 **Addressing errors for rejected messages:** when Bulwark can't parse a message strictly, it finds the recipient with a separate best-effort scan, used only for that purpose. The error's `id` is the message's top-level `id` if it appears exactly once; otherwise it is `null` (JSON-RPC 2.0 §5). Oversized lines are discarded to the next newline and answered with `-32010` and `id: null`. Spec 002 AC-7 and AC-26a give the full routing rules, including blocked responses and notifications.
@@ -1120,6 +1122,9 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 37 | Pin re-checks are rate-limited by `pin_recheck_min_age` (default 30 s) | A tiny `ttlMs` or a stream of change notifications must not force a re-check per call (review S5) | — | 2026-11-26 |
 | 38 | Audit records store keyed HMAC-SHA-256 argument values, not plain hashes | Plain hashes of short arguments can be reversed by guessing (review N3) | — | 2026-11-26 |
 | 39 | `arg_roles` are read from configuration at decision time and are not stored in pins | The reason to declare roles is that the server picks argument names; operator configuration already answers that. A pinned copy added no protection and went stale under spec 005's write rules (review B2 on PR #8) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-27 |
+| 40 | `derived.<role>` is a list of objects, one per value; `null` for an unparseable value or an absent required declared argument | One tool can carry a role on several arguments (L-03: `to` and `bcc`); `null` elements keep the helper-rule form failing closed, and absence can't skip a restriction | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
+| 41 | No IDNA conversion: a non-ASCII host is `null` (denied by allowlists); allowlists use punycode | The standard library has no IDNA; a dependency for it adds parsing ambiguity at a trust boundary, and denying is the safe default | — | 2026-11-27 |
+| 42 | Policies are type-checked against `schemas/policy-input.v1.json` at load; any load error stops `wrap` in every mode | A misspelled field otherwise makes a `deny` rule silently never fire; a broken policy would make `warn` results misleading too | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:

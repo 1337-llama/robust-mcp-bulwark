@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Ready (on merge of this PR) |
-| Traces to | FR-021, FR-030, FR-033 (also FR-024's role-mapping storage); threats T-06, T-08, T-18; mitigations M-2, M-8 |
+| Traces to | FR-021, FR-030, FR-033; threats T-06, T-08, T-18; mitigations M-2, M-8 |
 | Milestone | M2 |
 | Depends on | Spec 002 (pipeline, canonical form, gateway-originated requests, audit) |
 
