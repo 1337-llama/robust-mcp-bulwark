@@ -47,20 +47,23 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("valid manifest rejected: %v", err)
 	}
 	cases := map[string][2]string{
-		"unknown field":      {"server: l04-web-notes", "server: l04-web-notes\ncolour: red"},
-		"technique":          {"atlas: [AML.T0051.001, AML.T0086]", "atlas: [AML.T9999]"},
-		"control":            {"control: policy:http-allowlist", "control: firewall:magic"},
-		"analyzer name":      {"control: policy:http-allowlist", "control: analyzer:made.up/*"},
-		"no reference":       {`references: ["https://arxiv.org/abs/2508.14925"]`, "references: []"},
-		"pending format":     {"pending: spec-006", "pending: soon"},
-		"missing condition":  {"      warn: {canary_exfiltrated: true, controls_fired: [policy:http-allowlist]}\n", ""},
-		"unknown observable": {"none: {canary_exfiltrated: true}", "none: {it_worked: true}"},
-		"AC-28 tool":         {"approve: all", "approve: [fetch_note]"},
-		"AC-28 metadata":     {"approve_metadata: true", "approve_metadata: false"},
-		"two actions":        {"  - list_tools: {}", "  - {list_tools: {}, discover: {}}"},
-		"revision":           {"revisions: [2026-07-28]", "revisions: [2024-11-05]"},
-		"secret canary":      {"secret: AKIAEXAMPLECANARYLDZ", "secret: AKIAEXAMPLEL04CANARY"},
-		"plain canary":       {"plain: canary-plain-l04", "plain: canary-plain-l05"},
+		"unknown field":       {"server: l04-web-notes", "server: l04-web-notes\ncolour: red"},
+		"technique":           {"atlas: [AML.T0051.001, AML.T0086]", "atlas: [AML.T9999]"},
+		"control":             {"control: policy:http-allowlist", "control: firewall:magic"},
+		"analyzer name":       {"control: policy:http-allowlist", "control: analyzer:made.up/*"},
+		"no reference":        {`references: ["https://arxiv.org/abs/2508.14925"]`, "references: []"},
+		"pending format":      {"pending: spec-006", "pending: soon"},
+		"missing condition":   {"      warn: {canary_exfiltrated: true, controls_fired: [policy:http-allowlist]}\n", ""},
+		"unknown observable":  {"none: {canary_exfiltrated: true}", "none: {it_worked: true}"},
+		"AC-28 tool":          {"approve: all", "approve: [fetch_note]"},
+		"AC-28 metadata":      {"approve_metadata: true", "approve_metadata: false"},
+		"two actions":         {"  - list_tools: {}", "  - {list_tools: {}, discover: {}}"},
+		"revision":            {"revisions: [2026-07-28]", "revisions: [2024-11-05]"},
+		"secret canary":       {"secret: AKIAEXAMPLECANARYLDZ", "secret: AKIAEXAMPLEL04CANARY"},
+		"plain canary":        {"plain: canary-plain-l04", "plain: canary-plain-l05"},
+		"controls_fired typo": {"warn: {canary_exfiltrated: true, controls_fired: [policy:http-allowlist]}", "warn: {canary_exfiltrated: true, controls_fired: [policy:http-allowlist, firewall:x]}"},
+		"observable type":     {"none: {canary_exfiltrated: true}", "none: {canary_exfiltrated: \"yes\"}"},
+		"second document":     {"      enforce: {canary_exfiltrated: false, controls_fired: [policy:http-allowlist]}\n", "      enforce: {canary_exfiltrated: false, controls_fired: [policy:http-allowlist]}\n---\nid: L-05\n"},
 	}
 	for name, c := range cases {
 		body := strings.Replace(valid, c[0], c[1], 1)

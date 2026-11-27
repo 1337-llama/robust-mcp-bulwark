@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"slices"
@@ -98,7 +99,13 @@ type Allowlist struct {
 func decodeStrict(b []byte, v any) error {
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
-	return d.Decode(v)
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	if d.Decode(new(any)) != io.EOF {
+		return errors.New("only one YAML document is allowed")
+	}
+	return nil
 }
 
 func LoadAllowlist(path string) (*Allowlist, error) {
@@ -127,7 +134,7 @@ func Load(path string, allow *Allowlist) (*Manifest, error) {
 }
 
 var (
-	idRe      = regexp.MustCompile(`^L-0[1-8]$`)
+	idRe      = regexp.MustCompile(`^L-0[1-8]$`) // v0.1 has eight scenarios; widen deliberately (and the AC-31 canary letters) for L-09+
 	pendingRe = regexp.MustCompile(`^spec-\d{3}$`)
 	policyRe  = regexp.MustCompile(`^policy:[a-z0-9][a-z0-9-]*$`)
 	observ    = []string{"poison_delivered", "canary_exfiltrated", "forbidden_call_executed", "controls_fired"}
@@ -235,9 +242,24 @@ func (m *Manifest) validate(a *Allowlist) error {
 			if !slices.Contains([]string{"none", "warn", "enforce"}, cond) {
 				bad("%s: unknown condition %q", where, cond)
 			}
-			for k := range obs {
-				if !slices.Contains(observ, k) {
+			for k, val := range obs {
+				switch {
+				case !slices.Contains(observ, k):
 					bad("%s: unknown observable %q", where, k)
+				case k == "controls_fired":
+					list, ok := val.([]any)
+					if !ok {
+						bad("%s: controls_fired must be a list", where)
+					}
+					for _, c := range list {
+						if s, ok := c.(string); !ok || !a.ValidControl(s) {
+							bad("%s: controls_fired %v is not in the vocabulary", where, c)
+						}
+					}
+				default:
+					if _, ok := val.(bool); !ok {
+						bad("%s: %s must be true or false", where, k)
+					}
 				}
 			}
 		}
