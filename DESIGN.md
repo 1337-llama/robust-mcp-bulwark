@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.5 |
+| Version | 0.11.6 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -28,6 +28,7 @@
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 | 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
 | 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins. Re-check fix: the age threshold is never below `pin_recheck_min_age`, and pin-store changes use the 1 s event tier |
+| 0.11.6 | 2026-11-27 | Spec 005: observation file separate from the pins file (§6.4); `tools` CLI flags with fingerprint-checked approval (§6.1) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -661,10 +662,11 @@ MRTR applies to all three methods that may return `input_required` under 2026-07
 ### 6.1 CLI (v0.1)
 ```
 bulwark wrap    [--server-id ID] [--mode learn|warn|enforce] [--config FILE] [--state-dir DIR] -- <command> [args...]
-bulwark tools   list    --server-id ID [--json]
-bulwark tools   diff    --server-id ID [TOOL]
-bulwark tools   approve --server-id ID (TOOL... | --all | --metadata)
-bulwark tools   reject  --server-id ID TOOL...
+bulwark tools   list    --server-id ID [--json]                            # exit 3 if anything needs review
+bulwark tools   diff    --server-id ID [TOOL | --metadata]
+bulwark tools   approve --server-id ID (TOOL | --metadata) [--fingerprint sha256:…]
+bulwark tools   approve --server-id ID --all --yes-i-reviewed --fingerprints FILE
+bulwark tools   reject  --server-id ID (TOOL | --metadata)
 bulwark policy  test    [--policy-dir DIR]... [--input FILE]
 bulwark audit   verify  [--server-id ID | FILE...]
 bulwark audit   tail    [--server-id ID] [--event TYPE] [--follow] [--json]
@@ -749,7 +751,9 @@ limits:
   }
 }
 ```
-`status` is `approved`, `rejected`, or `pending`. Approval happens only through the CLI, never through MCP.
+`status` is `approved`, `rejected`, or `pending`. Approval happens only through the CLI (or `learn` mode), never through MCP.
+
+**Observation file** (`pins/<server_id>.observed.json`, spec 005): the gateway writes what it **observed**: the latest fingerprint, snapshot, timestamps, and findings per tool and for the metadata, plus duplicate names. It is bounded to 1,000 tools and 16 MiB. The gateway never writes the pins file outside `learn` mode, so server-supplied data reaches the pins file only through an explicit, fingerprint-checked approval (`tools approve --fingerprint`).
 
 ### 6.5 Audit record
 ```json
