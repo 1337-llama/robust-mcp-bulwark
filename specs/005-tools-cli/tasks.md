@@ -12,21 +12,12 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Commands**
 - [ ] **T5:** `tools list` (text and `--json`), with golden tests for every state and exit codes 0/3. (AC-4, AC-5)
-<<<<<<< HEAD
-- [ ] **T6:** `tools diff` for a tool and for `--metadata`, ending with the exact approve command; hostile-string golden test through `termsafe`. (AC-6, AC-7, AC-8, AC-13)
-- [ ] **T7:** `tools approve --fingerprint`: the locked transaction with fingerprint recomputation, the stale or mismatched refusal (exit 3), `findings_at_approval`; `--command` approval and `tools diff --command`. Tests first. (AC-9, AC-9a, AC-13)
-- [ ] **T8:** Interactive approval through a pseudo-terminal on `/dev/tty` (type 8 hex digits; piped stdin can't confirm); non-interactive refusal (exit 2). (AC-10)
-- [ ] **T9:** `--all` guard rails (`--yes-i-reviewed` + `--fingerprints FILE`). (AC-11)
-- [ ] **T10:** `tools reject` for a tool and for `--metadata`. (AC-12, AC-13)
-- [ ] **T11:** CLI audit chain records, verified by `audit verify`. (AC-14)
-=======
 - [ ] **T6:** `tools diff` for a tool and for `--metadata`, ending with the exact approve command; roles beside each property and `roles.unknown_param`; hostile-string golden test through `termsafe`. (AC-6, AC-7, AC-8, AC-13)
 - [ ] **T7:** `tools approve --fingerprint`: the locked transaction with fingerprint recomputation, the stale or mismatched refusal (exit 3), `findings_at_approval`; `--command` approval and `tools diff --command`. Tests first. (AC-9, AC-9a, AC-13)
 - [ ] **T8:** Interactive approval through a pseudo-terminal on `/dev/tty` (type 8 hex digits; piped stdin can't confirm); non-interactive refusal (exit 2). (AC-10)
 - [ ] **T9:** `--all` guard rail: `--fingerprints FILE`, approving only matching items. (AC-11)
 - [ ] **T10:** `tools reject` for a tool and for `--metadata`. (AC-12, AC-13)
 - [ ] **T11:** Per-server CLI audit chain (`cli.jsonl`, appended under the lock), verified by `audit verify`. (AC-14)
->>>>>>> origin/main
 - [ ] **T12:** Permission checks and refusal; confirm no network access. (AC-16, AC-17)
 
 **Integration**
