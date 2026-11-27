@@ -82,3 +82,19 @@ func TestRepoPasses(t *testing.T) {
 		}
 	}
 }
+
+// Verifies: NFR-003 (AC-21 trace check)
+func TestInetSockets(t *testing.T) {
+	trace := `1234  socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 3
+[pid  1235] connect(3, {sa_family=AF_UNIX, sun_path="/x"}, 110) = 0
+1236  socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK, IPPROTO_IP) = 5
+[pid  1237] socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP) = -1 EAFNOSUPPORT
+`
+	got := inetSockets(trace)
+	if len(got) != 2 || !strings.Contains(got[0], "AF_INET,") || !strings.Contains(got[1], "AF_INET6") {
+		t.Errorf("got %q", got)
+	}
+	if inetSockets("1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") != nil {
+		t.Error("AF_UNIX flagged")
+	}
+}
