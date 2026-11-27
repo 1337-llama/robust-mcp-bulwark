@@ -13,7 +13,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 - [ ] **T6:** `store.go` load, save, and format (`schema_version: 1`, §6.4), with round-trip tests. (AC-6)
 - [ ] **T7:** Atomic save (temp + rename), mode `0600`, advisory lock; test with 8 concurrent writers; crash-simulation test; store identity `(dev, inode, size, mtime)` with reload under the lock. (AC-6, AC-16a)
 - [ ] **T8:** Status transitions: only `learn` and the store API may approve; `learn` never changes `rejected`. A fuzz test drives random MCP sequences in `warn`/`enforce` and asserts no status changes. (AC-7, AC-9)
-- [ ] **T9:** `arg_roles` stored from configuration; `pin_event` on change. (AC-8)
+- [ ] **T9:** `arg_roles` read from configuration into the decision input; none stored in the pin. (AC-8)
 
 **Modes**
 - [ ] **T10:** `Decide` with the exhaustive, totality-checking table test from plan.md, including duplicate names and `findings_at_approval` matching. (AC-9–AC-14)

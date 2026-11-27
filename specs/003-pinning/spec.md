@@ -39,7 +39,7 @@ Two spec 001 attack tests become real: **L-02** (rug pull, `pin:changed`) and **
 **Pin store (DESIGN.md §6.4)**
 - **AC-6:** THE pin store SHALL be one JSON file per server at `<state_dir>/pins/<server_id>.json` (`schema_version: 1`, the §6.4 fields), written atomically (temporary file + rename), with mode `0600`, under an advisory file lock. A test with concurrent writers SHALL show no lost or corrupted updates.
 - **AC-7:** A pin's `status` (`pending`, `approved`, `rejected`) SHALL change only by: (a) `learn` mode, which approves new or changed items; or (b) the operator CLI (spec 005). **No MCP message SHALL ever change a pin's status in `warn` or `enforce` mode.**
-- **AC-8** (FR-024): THE pin store SHALL store each tool's `arg_roles` from the configuration. WHEN they change, THE gateway SHALL record a `pin_event` audit record.
+- **AC-8** (FR-024): THE policy decision input SHALL take each tool's `arg_roles` from the current configuration. They are not stored in the pin (amended by spec 005, DESIGN.md decision 39); a configuration change is visible through the configuration digest in the audit `start` record.
 
 **Modes (FR-021)**
 - **AC-9:** THE gateway SHALL decide every tool and the metadata with the **total** decision table in plan.md, which covers every combination of mode (`learn`, `warn`, `enforce`) and pin state: missing; pending; approved and unchanged; approved and changed; rejected; rejected and changed. An exhaustive table test SHALL enforce this. In particular:
