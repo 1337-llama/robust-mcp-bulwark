@@ -2,7 +2,7 @@
 
 > A security gateway for AI agents. MCP Bulwark sits between an agent and its MCP tools. It pins and inspects tool definitions, enforces least-privilege policy on every tool call, redacts secrets, and keeps a tamper-evident audit trail. Every protection is proven by an attack test that runs in CI.
 
-**Status: 🚧 Design complete; building starts next. No code yet.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The [design document](DESIGN.md), [decision records](docs/adr/), and [design review](docs/reviews/design-review-1.md) are part of the project.
+**Status: 🚧 Design approved; specs 001–008 written and reviewed. No code yet — implementation starts after the maintainer's check-in.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The [design document](DESIGN.md), [decision records](docs/adr/), [design review](docs/reviews/design-review-1.md), and [specs](specs/README.md) are part of the project. Every spec was checked by an independent reviewer session before merge.
 
 ## The problem
 
@@ -61,7 +61,8 @@ Why this approach? See [ADR-0001](docs/adr/0001-lab-first-roadmap.md) and [ADR-0
 | Doc | What it is |
 |---|---|
 | [IDEA.md](IDEA.md) | Problem, goals, non-goals, scope, prior art, success metrics |
-| [DESIGN.md](DESIGN.md) | Design document (in progress): requirements, architecture, threat model, spec backlog |
+| [DESIGN.md](DESIGN.md) | Design document (approved): requirements, architecture, threat model, decision log |
+| [specs/](specs/README.md) | Eight build specs with testable acceptance criteria, plans, and test-first tasks |
 | [docs/adr/](docs/adr/) | Architecture Decision Records |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | How this project goes from idea to code |
 | [SECURITY.md](SECURITY.md) | How to report vulnerabilities |
@@ -69,7 +70,7 @@ Why this approach? See [ADR-0001](docs/adr/0001-lab-first-roadmap.md) and [ADR-0
 
 ## Safety
 
-The attack lab (`lab/`) contains **intentionally malicious MCP servers for testing only**. They use fake canary secrets, "exfiltrate" only to a local loopback sink, and make no external network calls. Don't connect them to agents that have access to real data.
+The attack lab (`lab/`) contains **intentionally malicious MCP servers for testing only**. They use fake canary secrets, record "exfiltrated" data only to a local log file, and make no network calls at all. Once the suite is built, Linux CI will fail if any process opens an internet socket. Don't connect them to agents that have access to real data.
 
 ## License
 
