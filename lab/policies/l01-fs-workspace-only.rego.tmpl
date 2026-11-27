@@ -1,0 +1,9 @@
+# LAB ONLY: L-01 policy run (spec 006 AC-20). Rendered with {{lab_dir}}.
+package bulwark.authz
+
+deny contains "fs-workspace-only" if {
+	some p in input.derived.fs_path
+	not path_ok(p)
+}
+
+path_ok(p) if startswith(p.path, "{{lab_dir}}/workspace/")
