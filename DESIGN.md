@@ -667,7 +667,7 @@ bulwark wrap    [--server-id ID] [--mode learn|warn|enforce] [--config FILE] [--
 bulwark tools   list    --server-id ID [--json]                            # exit 3 if anything needs review
 bulwark tools   diff    --server-id ID [TOOL | --metadata]
 bulwark tools   approve --server-id ID (TOOL | --metadata) [--fingerprint sha256:…]
-bulwark tools   approve --server-id ID --all --yes-i-reviewed --fingerprints FILE
+bulwark tools   approve --server-id ID --all --fingerprints FILE
 bulwark tools   reject  --server-id ID (TOOL | --metadata)
 bulwark tools   approve --server-id ID --command --fingerprint sha256:…      # after the server's command_digest changed
 bulwark policy  test    [--policy-dir DIR]... [--input FILE]
