@@ -10,7 +10,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Lab kit and binary**
 - [ ] **T5:** `lab/labkit`: tests first for canary parsing, the observation-log writer (`seq` counter, JSONL), and fixture paths confined to `BULWARK_LAB_DIR`; then the implementation. (AC-3, AC-9)
-- [ ] **T6:** Canary shape tests: secret canaries are exactly `AKIA` + 16 uppercase letters or digits; plain canaries match no pattern in the lab's secret-like pattern list. (AC-31)
+- [ ] **T6:** Canary shape tests: secret canaries follow the AC-31 format (`AKIAEXAMPLECANARYL<letter>Z`, key alphabet `A-Z2-7`); plain canaries match no spec 007 rule. (AC-31)
 - [ ] **T7:** Source-scan tests: no direct `net`, `net/http`, or `net/rpc` imports under `lab/`; no `time.Now` or `math/rand` in lab servers. (AC-4, AC-9)
 - [ ] **T8:** `lab/cmd/bulwark-lab`: tests first (exit 2 without `BULWARK_LAB=1`; `LAB ONLY` banner; unknown subcommand error); then `main.go` with subcommand dispatch. (AC-5, AC-6)
 

@@ -65,7 +65,7 @@ When this spec is done, the README's results table exists. Every "Without Bulwar
 - **AC-28** (FR-004): IF a run's control is not a `pin:` control, and its `setup` leaves any tool the replay calls, or the server metadata, unapproved, THEN manifest validation SHALL fail. Otherwise pinning, not the named control, would block the attack.
 - **AC-29** (FR-004): THE `meta` job SHALL fail IF a spec whose status is `Done` is still named in any manifest's `pending:` field, so pending tests can't be forgotten.
 - **AC-30** (NFR-003, T-L1): THE suite and the lab servers SHALL run as a non-root user in CI. WHEN the environment variable `CI` is `true` AND the effective user ID is 0, THE suite SHALL fail.
-- **AC-31** (FR-002): THE secret-shaped canaries SHALL match the AWS access key ID shape exactly (`AKIA` followed by 16 uppercase letters or digits, 20 characters). THE plain canaries SHALL match no secret-like pattern in the lab's pattern list (replaced by the real rule set when spec 007 lands). Both are unit-tested.
+- **AC-31** (FR-002): THE secret-shaped canaries SHALL be `AKIAEXAMPLECANARY` + `L` + the scenario letter (`A` = L-01 … `H` = L-08) + `Z` (20 characters, all in the AWS key alphabet `A-Z2-7`), so they match spec 007's `aws-access-key` rule. THE plain canaries SHALL match no spec 007 rule. Both are unit-tested. (Amended by spec 007: the first draft allowed any digit, which the real key format, and so the rule, excludes.)
 
 ## Out of scope
 - The gateway itself (spec 002 onward). In this spec, `warn` and `enforce` expectations are all `pending`. The **configuration keys** that AC-27 relies on (`analyzers.enabled`, `secrets.requests`, `mrtr.mode`) are part of DESIGN.md §6.3 and are implemented by the specs that build each control.
