@@ -4,6 +4,8 @@ go 1.27
 
 tool honnef.co/go/tools/cmd/staticcheck
 
+require go.yaml.in/yaml/v3 v3.0.6
+
 require (
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
