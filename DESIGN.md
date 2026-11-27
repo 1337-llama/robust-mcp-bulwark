@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.9 |
+| Version | 0.11.10 |
 | Last updated | 2026-11-27 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -31,6 +31,7 @@
 | 0.11.7 | 2026-11-27 | Spec 004: benign corpus is MCPTox's clean tools from the 42 permissively licensed servers (322); server-grouped split; Wilson intervals (§5.4). (0.11.6 was not used: spec 005's changes merged after this one, as 0.11.8) |
 | 0.11.8 | 2026-11-27 | Spec 005: observation file separate from the pins file (§6.4); `tools` CLI flags with fingerprint-checked approval, and `approve --command` for a changed `command_digest` (§6.1); `arg_roles` come from configuration only and are no longer stored in pins (§5.6, §6.3, §6.4; decision 39) |
 | 0.11.9 | 2026-11-27 | Spec 006: derived values are lists of objects with `null` for unparseable or absent values; no IDNA; policies type-checked against the input schema; a policy load error stops `wrap` in every mode; `-32011` for blocked MRTR retries on prompts and resources (§5.6, §6.6; decisions 40–42) |
+| 0.11.10 | 2026-11-27 | Spec 007: secret rules copied from gitleaks at a pinned commit (§5.5); canary format fixed to the real AWS key alphabet (§6.7) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -530,7 +531,7 @@ The rules are data: a versioned YAML file embedded in the binary (`go:embed`), u
 Both corpora are split **by server** (`sha256(server)[0] & 1`): whole servers go into a **tuning** half (used while writing rules) or a **held-out** half. CI reports detection and false-positive rates per analyzer **on the held-out half**, with Wilson 95 % intervals, so the rules can't simply be fitted to the test data.
 
 ### 5.5 Secret detection and redaction (`internal/redact`)
-- **Rules (v0.1, patterns only):** AWS access key IDs, GitHub tokens (`ghp_`, `gho_`, `ghs_`, `github_pat_`), Slack tokens (`xox?-`), Google API keys, Stripe live keys, PEM private-key blocks, and JWTs (medium). All are RE2. Each rule has positive and negative unit tests. The suite's plain canary must match none of them (§10.3).
+- **Rules (v0.1, patterns only, copied from gitleaks at a pinned commit, MIT; spec 007):** AWS access key IDs, GitHub tokens (`ghp_`, `gho_`, `ghs_`, `github_pat_`), Slack tokens (`xox?-`), Google API keys, Stripe live keys, PEM private-key blocks, and JWTs (medium). All are RE2. Each rule has positive and negative unit tests. The suite's plain canary must match none of them (§10.3).
 - **Where:** `tools/call` arguments, and `inputResponses` on retries of `tools/call`, `prompts/get`, and `resources/read` (client → server); results (`content` text, `structuredContent` strings, error `message`/`data`, resource text contents) (server → client). Binary and base64 blobs are not scanned in v0.1 (AR-9).
 - **Actions (configurable, §6.3):**
   - Requests: default **`deny`**, enforced by this interceptor itself, before and independent of policy (control `secrets:<rule>`). Silently changing an argument would alter what the tool does. `redact` and `audit` are the other options.
@@ -805,7 +806,7 @@ title: Indirect injection leading to exfiltration
 technique: {owasp_agentic: [ASI01], owasp_llm: [LLM01, LLM02], atlas: [AML.T0051.001, AML.T0086]}
 server: l04-web-notes              # bulwark-lab subcommand
 revisions: [2026-07-28]
-canaries: {plain: canary-plain-l04, secret: AKIAEXAMPLEL04CANARY}   # secret: AKIA + 16 = 20 chars
+canaries: {plain: canary-plain-l04, secret: AKIAEXAMPLECANARYLDZ}   # secret: AKIA + 16 from A-Z2-7 = 20 chars
 script:
   - send: {method: tools/list}
   - send: {method: tools/call, params: {name: fetch_note, arguments: {id: "n1"}}}
