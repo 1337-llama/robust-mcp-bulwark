@@ -16,7 +16,11 @@ Four rule-based analyzers look for poisoning in everything a server can put in f
 
 On **tool definitions** and **server metadata**, a high-severity finding hides or strips the item in `enforce` mode, through spec 003's hook. On **prompts, resources, and MRTR input requests**, findings are recorded but nothing is blocked (AR-8).
 
-The analyzers are measured honestly. Detection is measured against **485 published poisoned tool descriptions** (MCPTox, CC BY 4.0), and false positives against **benign tool definitions from the official MCP reference servers**. Both corpora are split into tuning and held-out halves, and CI reports results on the held-out half only. Four spec 001 attack runs become required: L-01, L-03, L-05, L-06, plus L-07's analyzer run.
+The analyzers are measured honestly. Both corpora come from MCPTox (AAAI 2026, CC BY 4.0), built on the same 45 real-world servers:
+- **detection** is measured against **485 published poisoned tool descriptions**
+- **false positives** are measured against the **353 clean, authentic tool definitions** of those servers
+
+Whole **servers** are held out, so near-duplicate attack templates can't leak across the split. CI reports results on the held-out half only. Four spec 001 attack runs become required: L-01, L-03, L-05, L-06, plus L-07's analyzer run.
 
 ## User stories
 - As a **developer**, I want a poisoned tool to be hidden even if I approved it in `learn` mode before I knew better.
@@ -27,22 +31,22 @@ The analyzers are measured honestly. Detection is measured against **485 publish
 
 **Framework (FR-022)**
 - **AC-1:** EACH finding SHALL carry: `analyzer`, `rule`, `severity` (`info`, `low`, `medium`, `high`), `channel` (`CH-1`…`CH-7`), `location` (a JSON Pointer, DESIGN.md §5.6), and `excerpt`. The excerpt is at most 120 characters, secret-redacted, and stored with every Cc/Cf/Zl/Zp code point escaped.
-- **AC-2:** THE text extractor SHALL produce `(location, string)` pairs for each channel:
-  - **CH-1, tools:** `name`, `title`, `description`, `annotations.title`, and in `inputSchema`/`outputSchema` every property **name**, `title`, `description`, `enum` and `default` string, at any depth, including `$defs`
-  - **CH-2, metadata:** `instructions`, and `serverInfo` `name`, `title`, `version`, `description`
-  - **CH-4, prompts:** the `prompts/list` `name`, `title`, `description`, and argument descriptions; `prompts/get` message text
-  - **CH-5, resources:** the `resources/list` and template `name`, `title`, `description`, `uri`/`uriTemplate`
-  - **CH-6, MRTR input requests:** elicitation `message` and `requestedSchema` texts; sampling message text and `systemPrompt`
-  - **CH-7, legacy server requests:** the same fields as CH-6
+- **AC-2:** THE text extractor SHALL produce `(location, string)` pairs by walking **every string value and every object key** in the channel's object, at any depth, rather than an allowlist of fields (future-proof, like T-18). It skips only: numbers, booleans, `mimeType`, `resultType`, `ttlMs`, `cacheScope`, `requestState` (opaque), and `uri`/`uriTemplate` **schemes** (the rest of a URI is analyzed). The objects walked per channel (2026-07-28 schema names) are:
+  - **CH-1:** each `Tool`
+  - **CH-2:** the `server/discover` or `initialize` result
+  - **CH-4:** `prompts/list` entries and the `prompts/get` result, including messages, `resource_link` items, and embedded resource `text`
+  - **CH-5:** `resources/list` and template entries
+  - **CH-6:** `InputRequiredResult.inputRequests`. **Tool definitions inside a sampling request** (`CreateMessageRequestParams.tools`) are analyzed as CH-1 objects. An elicitation `url` is analyzed and also gets an `elicitation.url` finding (severity `medium`), because URL-mode elicitation can be used for phishing.
+  - **CH-7:** legacy server requests, the same as CH-6
 - **AC-3** (T-02): EACH analyzer SHALL see each string twice: **raw**, and **normalized** (NFKC, then Unicode case folding, then removal of every Cf code point). A rule matches if it matches either form.
 - **AC-4:** THE rules SHALL be data: one versioned YAML file embedded with `go:embed`, using Go's RE2 engine only (linear time; no backtracking constructs exist). Every rule SHALL list at least one positive and one negative example in the file, and a test SHALL run all of them.
 - **AC-5:** Analysis results SHALL be cached by fingerprint (spec 003), so an unchanged tool or metadata is analyzed once per process. Strings longer than 64 KiB SHALL be analyzed up to 64 KiB, with an `analysis.truncated` finding (severity `low`).
 
 **The four analyzers (DESIGN.md §5.4)**
-- **AC-6 `unicode.hidden`:**
+- **AC-6 `unicode.hidden`:** (names: a `medium` finding only when the letters of a `name` come from more than one script, ignoring the `Common` and `Inherited` scripts, which hold digits, `_` and `-`. Single-script non-Latin names, for example localized ones, are not flagged.)
   - `high` for Unicode Tag characters (U+E0000–U+E007F) and bidi controls (U+202A–U+202E, U+2066–U+2069)
   - `medium` for other Cf code points (for example zero-width characters) and for Cc characters other than newline and tab
-  - `medium` for a tool or server `name` mixing letters from more than one Unicode script (homoglyph names)
+  - `medium` for a tool or server `name` mixing letters from more than one Unicode script (homoglyph names), as defined above
 - **AC-7 `text.imperative`:** rules for model-directed instructions:
   - ignore or override earlier instructions
   - conceal actions from the user ("do not tell/mention/inform the user")
@@ -61,24 +65,30 @@ The analyzers are measured honestly. Detection is measured against **485 publish
 - **AC-13:** THE configuration key `analyzers.enabled` SHALL select which analyzers run; `[]` disables all of them (spec 001 AC-27).
 
 **Corpora (FR-006)**
-- **AC-14:** `testdata/corpora/mcptox/poisoned.jsonl` SHALL contain all 485 poisoned tool descriptions from MCPTox's `pure_tool.json`. Each record holds:
-  - `id` (the MCPTox key, for example `FileSystem_1`), `server`, `tool_name`, `paradigm`, `risk`, `description`
-  - the source repository commit SHA
+- **AC-14:** `tools/corpus mcptox` SHALL convert MCPTox at a **pinned commit** into two files:
+  - **`testdata/corpora/mcptox/poisoned.jsonl`:** all 485 records of `pure_tool.json`, each with `id`, `server`, `tool_name`, `paradigm`, `risk`, `description`, and the source commit
+  - **`testdata/corpora/mcptox/clean.jsonl`:** the 353 clean, authentic tools named in `response_all.json` (`servers.<name>.tool_names`). Each record holds `server`, `name`, `description`, and arguments (name, description, required), parsed from that server's clean tool listing. The parser SHALL match every one of the 353 names exactly, de-duplicate repeated listings, and fail on a missing name.
 
-  It is converted by `tools/corpus mcptox`. A `NOTICE` file SHALL give the CC BY 4.0 attribution the license asks for: the MCPTox contributors, the paper citation (AAAI 2026, DOI 10.1609/aaai.v40i42.40895), the source repository URL, a link to the license, and a statement of the changes made (format conversion; content unchanged).
-- **AC-15:** `testdata/corpora/benign/tools.jsonl` SHALL contain **at least 100** tool definitions captured by `tools/corpus benign`, which runs the official MCP reference servers (github.com/modelcontextprotocol/servers; MIT, moving to Apache-2.0) and records `tools/list`. The exact package versions are recorded. A `NOTICE` file gives attribution. Re-capturing is a scripted step done by Claude, never by the maintainer.
+  A `NOTICE` file SHALL give the CC BY 4.0 attribution the license asks for: the MCPTox contributors; the paper citation (AAAI 2026, DOI 10.1609/aaai.v40i42.40895); the source repository URL and commit; a link to the license; and the changes made (format conversion and parsing; content unchanged).
+- **AC-15:** EACH corpus record SHALL be turned into analyzer input in a defined way:
+  - **Clean tools:** a CH-1 `Tool` object, `{name, description, inputSchema}`, built from the parsed arguments.
+  - **Poisoned items:** `{name: tool_name, description}`. MCPTox gives no schema for them, so **`schema.side_channel` is reported as "not measured" for detection.** Its false positives are still measured on the clean tools.
+  - **Cross-reference context** for both corpora is the server's clean tool names.
 - **AC-16** (spec 002 AC-34): ALL corpus files SHALL be plain ASCII. Every non-ASCII code point is written as a JSON escape sequence (backslash, `u`, four hex digits), which is lossless, so the hidden-character check applies with no exemptions. A test SHALL show that decoding reproduces the source strings exactly.
-- **AC-17:** EACH corpus SHALL be split once into **tuning** and **held-out** halves by the lowest bit of SHA-256(`id`). Rules are written and tuned against the tuning half only; this is stated in CONTRIBUTING.md. Both halves are checked in, and a test fixes the split.
-- **AC-18:** CI SHALL report, on the **held-out** halves:
+- **AC-16a (provenance, no maintainer step):** A `corpus-provenance.yml` workflow SHALL run on `workflow_dispatch` and weekly, with network allowed in that job only. It downloads the pinned MCPTox files, re-runs the conversion, and fails if the result differs from the committed corpus.
+- **AC-16b:** THE repository's `gitleaks` configuration SHALL allowlist `testdata/corpora/` only (scoped, with a comment), because MCPTox contains published, fake key-shaped strings. No other path is exempt.
+- **AC-17:** THE split SHALL be **by server**: held-out = lowest bit of SHA-256(`server`) is 1. Both corpora use the same function, so a held-out server's poisoned and clean tools are both held out. On the pinned data this holds out 20 of 45 servers (178 poisoned, 160 clean; all three paradigms present). Rules are written and tuned against the tuning half only, as stated in CONTRIBUTING.md. A test fixes the split.
+- **AC-18:** CI SHALL report, on the **held-out** halves, each with a **Wilson 95 % interval**:
   - **detection rate:** poisoned items with at least one finding of severity ≥ `medium`
   - **hide rate:** poisoned items with at least one `high` finding
-  - **false-positive rates:** benign items with a finding of severity ≥ `medium`, and with a `high` finding
+  - **false-positive rates:** clean tools with a finding ≥ `medium`, and with a `high` finding
 
-  Results are broken down per analyzer, per MCPTox paradigm (Template-1/2/3), and per risk category, in the job summary and in `testdata/corpora/report.json`.
-- **AC-19:** CI SHALL fail IF held-out detection or hide rates fall below, or false-positive rates rise above, the values in `testdata/corpora/baseline.json` (a ratchet). The baseline may change only in a PR that states why. The IDEA.md targets (≥ 90 % detection, ≤ 2 % false positives) are shown in the README next to the current values. **They are goals, not gates.** The README states honestly where the analyzers stand.
+  Results are broken down per analyzer (`not measured` where AC-15 says so), per MCPTox paradigm, and per risk category, in the job summary and in `testdata/corpora/report.json`.
+- **AC-19:** CI SHALL fail IF any held-out **point value** is worse than in `testdata/corpora/baseline.json`. The analysis is deterministic, so any lost detection or new false positive is a real change, not noise; the intervals are for interpretation. **A PR that changes `baseline.json` SHALL contain a line `baseline-change: <reason>` in its body or a commit message, which the `meta` job checks.** The IDEA.md targets (≥ 90 % detection, ≤ 2 % false positives) are shown in the README next to the current values and intervals. **They are goals, not gates.**
 
 **Suite (spec 001 expectations become required)**
-- **AC-20:** THE following runs SHALL drop `pending: spec-004` and pass, each with setup `{approve: all, approve_metadata: true}`:
+- **AC-20 (frozen payloads, no circularity):** THE lab payload strings SHALL live in `lab/servers/*/payload.txt` files, which are written by spec 001 and based on a cited public example (spec 001 AC-8). A `meta` check SHALL fail any PR that changes both a `payload.txt` file and `internal/analyzers/rules.yaml`. Payloads are never adjusted to fit the rules, and rules are never written against a payload.
+- **AC-21:** THE following runs SHALL drop `pending: spec-004`, each with setup `{approve: all, approve_metadata: true}`:
 
   | Scenario | Control | `warn` | `enforce` |
   |---|---|---|---|
@@ -88,8 +98,8 @@ The analyzers are measured honestly. Detection is measured against **485 publish
   | L-06 | `analyzer:unicode.hidden/*` | as above | `poison_delivered: false` |
   | L-07 | `analyzer:text.imperative/*` | as above | `poison_delivered: false` |
 
-  For L-01, L-03, and L-07 in `enforce`, `canary_exfiltrated` and `forbidden_call_executed` are **not asserted**. The scripted replay still calls the *clean* tools, as a fixed script always would. That the poison never reaches the model is the property an analyzer provides, and the README says so. L-01's and L-03's policy runs (spec 006) assert the call-level blocks.
-- **AC-21:** THE README results table SHALL show these cells, and the analyzer metrics with their targets.
+  IF the analyzers do not detect a frozen payload at `high` severity, THEN that run SHALL be marked `known_gap: "<reason>"` instead of being tuned. The suite reports known gaps separately, and the README lists them. For L-01, L-03, and L-07 in `enforce`, `canary_exfiltrated` and `forbidden_call_executed` are **not asserted**. The scripted replay still calls the *clean* tools. That the poison never reaches the model is the property an analyzer provides, and the README says so; spec 006's policy runs assert the call-level blocks.
+- **AC-21a:** THE README results table SHALL show these cells, any known gaps, and the analyzer metrics with intervals and targets.
 
 **Performance**
 - **AC-22** (NFR-004): THE spec 002 benchmark SHALL run with all four analyzers enabled and caching on, and the p95 < 5 ms gate SHALL still pass. A separate benchmark SHALL report cold (uncached) analysis time per tool definition, which is reported but not gated.
