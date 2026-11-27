@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.5 |
+| Version | 0.11.7 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -28,6 +28,7 @@
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 | 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
 | 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins. Re-check fix: the age threshold is never below `pin_recheck_min_age`, and pin-store changes use the 1 s event tier |
+| 0.11.7 | 2026-11-27 | Spec 004: benign corpus is MCPTox's 353 clean tools; server-grouped split; Wilson intervals (§5.4). (0.11.6 is reserved for spec 005's changes, which merge after this one) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -521,10 +522,10 @@ Excerpts are at most 120 characters, secret-redacted, and stored as escaped text
 The rules are data: a versioned YAML file embedded in the binary (`go:embed`), using Go's RE2 engine (linear time, no ReDoS). The seed notes' `text.sensitive_ref`, `annotation.mismatch`, and `size.anomaly` analyzers move to v0.2.
 
 **Detection corpora (FR-006):**
-- **Poisoned:** a subset of MCPTox's benchmark materials, licensed CC BY 4.0 (github.com/zhiqiangwang4/MCPTox-Benchmark), stored with a NOTICE file giving attribution, plus the lab's own scenario payloads.
-- **Benign:** tool definitions extracted from the official MCP reference servers (github.com/modelcontextprotocol/servers; MIT, moving to Apache-2.0), with attribution.
+- **Poisoned:** all 485 poisoned tool descriptions in MCPTox's `pure_tool.json` (github.com/zhiqiangwang4/MCPTox-Benchmark, CC BY 4.0, AAAI 2026), with attribution in a NOTICE file.
+- **Benign:** the 353 clean, authentic tool definitions of the same 45 real-world servers, from MCPTox's `response_all.json` (same license). This is larger and better matched than the official reference-servers repository, which now has only 7 servers (spec 004).
 
-Each corpus is split once, by a fixed seed, into a **tuning** half (used while writing rules) and a **held-out** half. CI reports detection and false-positive rates per analyzer **on the held-out half**, so the rules can't simply be fitted to the test data. IDEA.md sets the targets (≥ 90 % detection, ≤ 2 % false positives).
+Both corpora are split **by server** (lowest bit of SHA-256 of the server name): whole servers go into a **tuning** half (used while writing rules) or a **held-out** half. CI reports detection and false-positive rates per analyzer **on the held-out half**, with Wilson 95 % intervals, so the rules can't simply be fitted to the test data.
 
 ### 5.5 Secret detection and redaction (`internal/redact`)
 - **Rules (v0.1, patterns only):** AWS access key IDs, GitHub tokens (`ghp_`, `gho_`, `ghs_`, `github_pat_`), Slack tokens (`xox?-`), Google API keys, Stripe live keys, PEM private-key blocks, and JWTs (medium). All are RE2. Each rule has positive and negative unit tests. The suite's plain canary must match none of them (§10.3).
