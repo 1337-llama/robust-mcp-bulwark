@@ -23,12 +23,9 @@ func Observables(scenario, transcript, obs string) map[string]bool {
 	for sc.Scan() {
 		var e struct{ Dir, Line string }
 		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Dir == "recv" {
-			var decoded any // undo JSON escapes, then Tag smuggling (L-06)
-			if json.Unmarshal([]byte(e.Line), &decoded) == nil {
-				b, _ := json.Marshal(decoded)
-				if strings.Contains(labkit.DecodeTags(unescape(string(b))), marker) {
-					got["poison_delivered"] = true
-				}
+			var decoded any // JSON escapes undone by decoding; Tag smuggling (L-06) undone by DecodeTags
+			if json.Unmarshal([]byte(e.Line), &decoded) == nil && containsString(decoded, marker) {
+				got["poison_delivered"] = true
 			}
 		}
 	}
@@ -42,9 +39,25 @@ func Observables(scenario, transcript, obs string) map[string]bool {
 	return got
 }
 
-// unescape turns Go's JSON \u escapes of HTML characters back, so markers match.
-func unescape(s string) string {
-	return strings.NewReplacer(`<`, "<", `>`, ">", `&`, "&").Replace(s)
+// containsString reports whether any decoded string in v contains marker.
+func containsString(v any, marker string) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.Contains(labkit.DecodeTags(t), marker)
+	case map[string]any:
+		for k, e := range t {
+			if containsString(k, marker) || containsString(e, marker) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range t {
+			if containsString(e, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Check compares observables (and, outside "none", the controls in the audit

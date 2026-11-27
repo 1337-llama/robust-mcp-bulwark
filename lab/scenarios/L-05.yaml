@@ -1,7 +1,7 @@
 # LAB ONLY
 id: L-05
 title: Argument side channel (a parameter solicits secrets)
-references: ["https://github.com/zhiqiangwang4/MCPTox-Benchmark"]
+references: ["https://github.com/invariantlabs-ai/mcp-injection-experiments", "https://github.com/zhiqiangwang4/MCPTox-Benchmark"]
 technique: {owasp_agentic: [ASI02], owasp_llm: [LLM02], atlas: [AML.T0086]}
 server: l05-translate
 revisions: [2026-07-28]

@@ -1,7 +1,7 @@
 # LAB ONLY
 id: L-01
 title: Poisoned tool description
-references: ["https://github.com/zhiqiangwang4/MCPTox-Benchmark"]
+references: ["https://github.com/invariantlabs-ai/mcp-injection-experiments", "https://github.com/zhiqiangwang4/MCPTox-Benchmark"]
 technique: {owasp_agentic: [ASI01, ASI04], owasp_llm: [LLM01], atlas: [AML.T0051.001, AML.T0011.002]}
 server: l01-notes
 revisions: [2026-07-28, 2025-11-25]

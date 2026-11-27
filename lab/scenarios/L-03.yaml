@@ -1,7 +1,7 @@
 # LAB ONLY
 id: L-03
 title: Tool shadowing (one tool steers another)
-references: ["https://github.com/zhiqiangwang4/MCPTox-Benchmark"]
+references: ["https://github.com/invariantlabs-ai/mcp-injection-experiments"]
 technique: {owasp_agentic: [ASI02], owasp_llm: [LLM01], atlas: [AML.T0051.001]}
 server: l03-mail
 revisions: [2026-07-28]
