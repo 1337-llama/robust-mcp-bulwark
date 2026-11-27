@@ -92,6 +92,8 @@ Every request gets a fresh integer `id`. `{{canaries.<name>}}` and `{{lab_dir}}`
 **Results** (`results.json`, DESIGN.md §6.8): one entry per cell, with `status` one of `pass`, `fail`, `pending`, `timeout`. The run header holds the commit and the Go version. AC-22 compares everything except the header.
 
 ## Run setup and generated configuration (AC-27, AC-28)
+**`setup` defaults** (stated in spec 003, AC-22): `approve: all` and `approve_metadata: true`. A run must say explicitly when it wants a tool or the metadata to be unapproved.
+
 For a `warn` or `enforce` cell, the runner:
 1. Renders the run's policy template (if any) with `{{lab_dir}}`.
 2. Runs a **learn pass**: Bulwark in `learn` mode, replay steps `discover` and `list_tools` only, then exit. This seeds the pin store with the server's *initial* definitions. Then, per `setup`, it marks tools and metadata `approved` or leaves them `pending`, using the pin store format in DESIGN.md §6.4.

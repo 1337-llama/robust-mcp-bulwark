@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.4 |
+| Version | 0.11.5 |
 | Last updated | 2026-11-26 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -27,6 +27,7 @@
 | 0.11.2 | 2026-11-26 | From the spec 001 review: configuration keys `analyzers.enabled` and `mrtr.mode` added to §6.3 (needed to enable one control per suite run, FR-004); §6.7 points to the full manifest format |
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 | 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
+| 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -488,11 +489,15 @@ This identifies *what was asked to launch*, not every file the server loads. A c
 **Modes:**
 | Mode | New or changed tool | Changed or unapproved metadata | High-severity finding |
 |---|---|---|---|
-| `learn` | Pinned automatically; audited | Pinned automatically; audited | Audited |
+| `learn` | Pinned automatically; audited. A **rejected** pin is never changed by `learn` | Pinned automatically; audited | Audited |
 | `warn` | Forwarded; `pin.unapproved` / `pin.changed` finding | Forwarded; finding | Forwarded; finding |
 | `enforce` | **Hidden** from `tools/list`; calls get "Unknown tool" | `instructions` and free-text fields **stripped** | Tool **hidden** / metadata **stripped** until approved |
 
-**Re-check schedule (FR-030):** the tool view becomes stale after a `ToolViewStale` event, or when its age exceeds `min(ttlMs, pin_recheck_max_age)`. A `ttlMs` of 0 is treated as no hint. In every case, the gateway re-checks **at most once per `pin_recheck_min_age`** (default 30 s), so neither a tiny `ttlMs` nor a stream of change notifications can force a re-check before every call. A change to the pin store on disk, for example an approval made with the CLI, also marks the view stale (spec 003 AC-16). The gateway's own `tools/list` follows every `nextCursor` page.
+**Re-check schedule (FR-030; details in spec 003):**
+- **Normalizing `ttlMs`:** values that are missing, zero or negative, non-integer, non-finite, or above 2^31 count as no hint, so a server can't switch off age-based re-checks with a bad value.
+- **When the view is stale:** after a `ToolViewStale` event; when its age exceeds `min(ttlMs, pin_recheck_max_age)`; or when the pin store changes on disk (for example after a CLI approval).
+- **Rate limits:** re-checks after a notification run at most once per second; others at most once per `pin_recheck_min_age` (default 30 s). In `enforce` mode, a call that arrives while the view is stale and a re-check isn't yet allowed is **blocked** (`pin.recheck_pending`). So a notification flood can only hurt the server's own availability; it can't skip the check.
+- **Gateway-originated requests** carry the triggering client request's `_meta`, time out after `limits.gateway_request_timeout` (10 s), and follow `nextCursor` for at most 100 pages or 16 MiB, failing closed beyond that.
 
 **Diffs** (`bulwark tools diff`) show a path-based structural diff of the JSON plus a line diff for long strings. All untrusted text goes through `termsafe` (FR-029).
 
@@ -721,6 +726,7 @@ limits:
   max_depth: 64
   max_outstanding_requests: 256
   notifications_per_second: 20
+  gateway_request_timeout: 10s  # Bulwark's own discover and re-check requests only
 ```
 
 ### 6.4 Pin store (`pins/<server_id>.json`, `schema_version: 1`)

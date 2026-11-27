@@ -37,37 +37,40 @@ type Verdict int // Visible, Hidden
 func Decide(mode Mode, pin *ToolPin, currentFP string, highFinding bool) (Verdict, []Finding, []string /*controls*/)
 ```
 
-**Decision table** (`modes.go`, tested exhaustively):
-| Mode | Pin state | Action | Finding / control |
+**Decision table** (`modes.go`). It is **total**: the exhaustive test enumerates every mode × pin state × high-finding combination and fails on any missing cell.
+
+| Pin state | `learn` | `warn` | `enforce` |
 |---|---|---|---|
-| `learn` | missing or changed | pin as `approved`, visible | `pin_event` |
-| `warn` | missing | visible | `pin.unapproved` / `pin:unapproved` |
-| `warn` | changed | visible | `pin.changed` / `pin:changed` |
-| `warn` | rejected | visible | `pin.unapproved` / `pin:unapproved` |
-| `enforce` | missing, pending, rejected | **hidden** | `pin.unapproved` / `pin:unapproved` |
-| `enforce` | changed | **hidden** | `pin.changed` / `pin:changed` |
-| `enforce` | approved + high finding | **hidden** | the analyzer's control |
-| any | approved, unchanged, no high finding | visible | none |
+| missing | pin `approved`, visible, `pin_event` | visible; `pin.unapproved` / `pin:unapproved` | **hidden**; `pin.unapproved` / `pin:unapproved` |
+| pending | set `approved`, visible, `pin_event` | visible; `pin.unapproved` / `pin:unapproved` | **hidden**; `pin.unapproved` / `pin:unapproved` |
+| approved, unchanged | visible | visible | visible |
+| approved, changed | re-pin `approved`, visible, `pin_event` | visible; `pin.changed` / `pin:changed` | **hidden**; `pin.changed` / `pin:changed` |
+| rejected (changed or not) | **stays rejected**; visible; `pin.rejected` audited | visible; `pin.rejected` / `pin:unapproved` | **hidden**; `pin.rejected` / `pin:unapproved` |
+| duplicate name in listing | not pinned; `pin.duplicate_name` | visible; `pin.duplicate_name` / `pin:duplicate_name` | **all copies hidden**; `pin:duplicate_name` |
+| any visible state + high finding not in `findings_at_approval` | unchanged | visible; analyzer's control | **hidden**; analyzer's control |
 
-The same table applies to metadata, with "hidden" meaning "stripped" (AC-13).
+The same table applies to metadata, with "hidden" meaning "reduced" (AC-13). Duplicate names don't apply to metadata.
 
-**Staleness and re-check:**
-- `stale = listChangedSeen || (ttl > 0 && age > min(ttl, maxAge)) || (ttl == 0 && age > maxAge) || storeMTimeChanged`
-- `allowRecheck = now - lastRecheck >= minAge`
-
-The clock is injected for deterministic tests (NFR-008).
+**Normalization, staleness, and re-check** (clock injected for deterministic tests, NFR-008):
+- `ttl := normalize(ttlMs)`: missing, ≤ 0, non-integer, non-finite, or > 2^31 → none. Across pages, take the minimum valid value.
+- `stale := listChangedSeen || age > (ttl != none ? min(ttl, maxAge) : maxAge) || storeIdentityChanged(dev, inode, size, mtime)`
+- `allowRecheck := (listChangedSeen && now - lastRecheck >= 1s) || (!listChangedSeen && now - lastRecheck >= minAge)`
+- `enforce` and `stale` and `!allowRecheck` → block (`pin.recheck_pending`, AC-17a).
+- Gateway-originated requests copy `_meta` `protocolVersion` and `clientCapabilities` from the triggering client request (AC-15a). They time out after `gateway_request_timeout` (10 s, AC-15b). A `tools/list` re-check stops at 100 pages or 16 MiB (AC-15c).
 
 ## Test approach
 | Acceptance criterion | Test type | Location |
 |---|---|---|
-| AC-1, AC-2, AC-3 | Unit: golden fingerprints; every field changes the fingerprint (property test that mutates one leaf at a time); `exclude_fields` behavior | `internal/registry/fingerprint_test.go` |
-| AC-4, AC-5 | Unit: digest mismatch → all `changed`; unpinned `npx`/`uvx`/`docker` detection table | `internal/registry/identity_test.go`, `internal/state/identity_test.go` |
-| AC-6, AC-7, AC-8 | Unit and integration: atomic write and crash simulation (temporary file left behind); 8 concurrent writers; no status change from MCP traffic in `warn`/`enforce` (fuzzed message sequences) | `internal/registry/store_test.go` |
-| AC-9–AC-14 | Table test of `Decide`; integration through `bulwark wrap` with a fake upstream for list filtering, pagination, `-32602`, metadata stripping, and the stub analyzer | `internal/registry/modes_test.go`, `internal/proxy/pin_test.go` |
-| AC-15 | Integration: client sends `tools/list` first under 2026-07-28 → Bulwark's own discover is observed upstream first, and its response is not forwarded | `internal/proxy/discover_test.go` |
-| AC-16–AC-18 | Unit with an injected clock: every staleness trigger; the `min_age` rate limit; `ttlMs: 0`; `ttlMs: 1`; integration with a fake upstream that changes a tool without notifying | `internal/registry/view_test.go`, `internal/proxy/recheck_test.go` |
-| AC-19, AC-20 | The suite (now-required cells), plus the README table generated from `results.json` | `lab/suite` |
+| AC-1, AC-1a, AC-2, AC-3 | Unit: golden fingerprints; property test mutating one leaf at a time (tool objects and whole discover/initialize results, including unknown `_meta` keys); volatile members ignored; duplicate names on one page and across pages | `internal/registry/fingerprint_test.go`, `internal/registry/duplicates_test.go` |
+| AC-4, AC-5 | Unit: digest mismatch → all `changed`; unpinned detection table (`npx pkg`, `@latest`, `@next`, `@^1`, `@1.x`, `@1.2.3`, `@1.2.3-rc.1`; `uvx pkg`, `pkg==1.2.3`; `docker run img:tag`, `img@sha256:…`) | `internal/registry/identity_test.go`, `internal/state/identity_test.go` |
+| AC-6, AC-7, AC-8 | Unit and integration: atomic write and crash simulation; 8 concurrent writers; fuzzed MCP sequences in `warn`/`enforce` never change status | `internal/registry/store_test.go` |
+| AC-9–AC-14 | Exhaustive table test of `Decide` (totality); `learn` never changes `rejected`; `findings_at_approval` matching; integration through `bulwark wrap` (filtering, pagination, `-32602`, reduced metadata with 128-character caps, stub analyzer) | `internal/registry/modes_test.go`, `internal/proxy/pin_test.go` |
+| AC-14a | Integration: approval written to the store → client receives `list_changed` (legacy) or a tagged notification on an open listen stream (2026-07-28); none without a stream | `internal/proxy/notify_test.go` |
+| AC-15–AC-15c | Integration: Bulwark's own discover first, carrying the client's `_meta`; discover error or timeout → reduced metadata; re-check error or timeout → call blocked; endless `nextCursor` → stops at 100 pages, call blocked | `internal/proxy/discover_test.go`, `internal/proxy/recheck_test.go` |
+| AC-16–AC-18 | Unit with an injected clock: `ttlMs` of `-1`, `0`, `1`, `1.5`, `1e300`, absent, and mixed across pages; every staleness trigger; notification re-check at 1 s; age re-check at `min_age`; stale while rate-limited → `pin.recheck_pending`; a fake upstream that changes a tool without notifying | `internal/registry/view_test.go`, `internal/proxy/recheck_test.go` |
+| AC-19, AC-20 | The suite (now-required cells, with the stated setups), plus the README table generated from `results.json` | `lab/suite` |
 | AC-21 | The spec 002 benchmark with pinning enabled | `internal/pipeline/bench_test.go` |
+| AC-22 | Diff of spec 001's AC-2 vocabulary and plan setup defaults, checked in review | spec 001 files |
 
 ## Risks and mitigations
 | Risk | Mitigation |
