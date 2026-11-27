@@ -209,12 +209,19 @@ func pending(root string) []string {
 	return out
 }
 
-var inetSocket = regexp.MustCompile(`\bsocket\(AF_INET6?\b`)
+var (
+	inetSocket = regexp.MustCompile(`\bsocket(pair)?\((AF|PF)_INET6?\b`)
+	labExec    = regexp.MustCompile(`\bexecve\("[^"]*bulwark-lab"`)
+)
 
 // inetSockets returns every strace line that creates an internet socket, from
-// any process (strace -f prefixes lines with the PID). AF_UNIX is allowed.
+// any process (strace -f prefixes lines with the PID). AF_UNIX is allowed. A
+// trace with no execve of bulwark-lab proves nothing, so it fails too.
 func inetSockets(trace string) []string {
 	var bad []string
+	if !labExec.MatchString(trace) {
+		bad = append(bad, "trace shows no execve of bulwark-lab: the lab servers did not run under strace")
+	}
 	for _, line := range strings.Split(trace, "\n") {
 		if inetSocket.MatchString(line) {
 			bad = append(bad, line)

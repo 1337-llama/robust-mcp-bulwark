@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - run: sudo apt-get install -y strace
+      - run: sudo apt-get update -qq && sudo apt-get install -y strace
       - name: Build (network allowed only here)
         run: |
           go build -o "$RUNNER_TEMP/bulwark-lab" ./lab/cmd/bulwark-lab
@@ -27,7 +27,7 @@ jobs:
           for i in 1 2; do
             sudo unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
               env CI=true HOME="$HOME" BULWARK_LAB_BIN="$RUNNER_TEMP/bulwark-lab" BULWARK_RESULTS="$RUNNER_TEMP/results-$i.json" \
-              strace -f -qq -e trace=%network -o "$RUNNER_TEMP/trace-$i.txt" "$RUNNER_TEMP/suite.test" -test.count=1
+              strace -f -qq -e trace=%network,execve -o "$RUNNER_TEMP/trace-$i.txt" "$RUNNER_TEMP/suite.test" -test.count=1
           done
       - name: No internet sockets in either trace
         run: |
@@ -37,7 +37,7 @@ jobs:
         run: '"$RUNNER_TEMP/ci-summary" -compare "$RUNNER_TEMP/results-1.json" "$RUNNER_TEMP/results-2.json"'
       - name: Results table
         if: always()
-        run: '"$RUNNER_TEMP/ci-summary" "$RUNNER_TEMP/results-1.json" >> "$GITHUB_STEP_SUMMARY"'
+        run: '[ ! -f "$RUNNER_TEMP/results-1.json" ] || "$RUNNER_TEMP/ci-summary" "$RUNNER_TEMP/results-1.json" >> "$GITHUB_STEP_SUMMARY"'
   macos:
     runs-on: macos-15
     timeout-minutes: 10
@@ -50,4 +50,4 @@ jobs:
         run: BULWARK_RESULTS="$RUNNER_TEMP/results.json" go test -count=1 ./lab/suite
       - name: Results table
         if: always()
-        run: go run ./tools/ci-summary "$RUNNER_TEMP/results.json" >> "$GITHUB_STEP_SUMMARY"
+        run: '[ ! -f "$RUNNER_TEMP/results.json" ] || go run ./tools/ci-summary "$RUNNER_TEMP/results.json" >> "$GITHUB_STEP_SUMMARY"'
