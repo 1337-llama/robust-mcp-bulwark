@@ -7,6 +7,9 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,7 +46,11 @@ var allowedRunners = map[string]bool{
 	"windows-latest": true, "windows-2025": true, "windows-2022": true,
 }
 
-var sha = regexp.MustCompile(`@[0-9a-f]{40}$`)
+var (
+	sha        = regexp.MustCompile(`@[0-9a-f]{40}$|^docker://[^@]+@sha256:[0-9a-f]{64}$`)
+	matrixRef  = regexp.MustCompile(`^\$\{\{\s*matrix\.(\w+)\s*\}\}$`)
+	pendingRef = regexp.MustCompile(`pending:\s*spec-(\d{3})`)
+)
 
 func labels(root string) []string {
 	files, _ := filepath.Glob(filepath.Join(root, ".github/workflows/*.y*ml"))
@@ -51,10 +58,11 @@ func labels(root string) []string {
 	for _, f := range files {
 		var wf struct {
 			Jobs map[string]struct {
-				RunsOn  any `yaml:"runs-on"`
-				Timeout any `yaml:"timeout-minutes"`
-				Uses    string
-				Steps   []struct{ Uses string }
+				RunsOn   any `yaml:"runs-on"`
+				Timeout  any `yaml:"timeout-minutes"`
+				Strategy struct{ Matrix map[string]any }
+				Uses     string
+				Steps    []struct{ Uses string }
 			}
 		}
 		b, err := os.ReadFile(f)
@@ -68,8 +76,19 @@ func labels(root string) []string {
 		pr := strings.Contains(string(b), "pull_request")
 		for name, j := range wf.Jobs {
 			where := fmt.Sprintf("%s: job %s", f, name)
-			if r, ok := j.RunsOn.(string); j.Uses == "" && (!ok || !allowedRunners[r]) {
-				out = append(out, fmt.Sprintf("%s: runner %v is not a standard GitHub-hosted label", where, j.RunsOn))
+			runners := []any{j.RunsOn}
+			if r, ok := j.RunsOn.(string); ok {
+				if m := matrixRef.FindStringSubmatch(r); m != nil {
+					runners, _ = j.Strategy.Matrix[m[1]].([]any) // every matrix value must be allowed
+				}
+			}
+			for _, r := range runners {
+				if name, ok := r.(string); j.Uses == "" && (!ok || !allowedRunners[name]) {
+					out = append(out, fmt.Sprintf("%s: runner %v is not a standard GitHub-hosted label", where, r))
+				}
+			}
+			if len(runners) == 0 && j.Uses == "" {
+				out = append(out, where+": runner matrix is empty or not a list")
 			}
 			if pr && j.Uses == "" && j.Timeout != 10 {
 				out = append(out, where+": PR jobs must set timeout-minutes: 10")
@@ -113,21 +132,46 @@ func doneSpecs(root string) map[string][]string {
 	return done
 }
 
-func coverage(root string) []string {
-	var tests strings.Builder
+var testName = regexp.MustCompile(`^Test(N?FR)(\d{3})`)
+
+// covered collects the requirement IDs named by test functions (TestFR001…) or
+// by "// Verifies:" comments in _test.go files. Files are parsed, so string
+// literals and fixtures never count.
+func covered(root string) map[string]bool {
+	ids := map[string]bool{}
 	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(p, "_test.go") {
-			b, _ := os.ReadFile(p)
-			tests.Write(b)
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), p, nil, parser.ParseComments)
+		if err != nil {
+			return nil
+		}
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				if m := testName.FindStringSubmatch(fn.Name.Name); m != nil {
+					ids[m[1]+"-"+m[2]] = true
+				}
+			}
+		}
+		for _, c := range f.Comments {
+			if t := c.Text(); strings.Contains(t, "Verifies:") {
+				for _, id := range reqID.FindAllString(t, -1) {
+					ids[id] = true
+				}
+			}
 		}
 		return nil
 	})
-	src := tests.String()
+	return ids
+}
+
+func coverage(root string) []string {
+	have := covered(root)
 	var out []string
 	for spec, ids := range doneSpecs(root) {
 		for _, id := range ids {
-			named := strings.Contains(src, "func Test"+strings.ReplaceAll(id, "-", "")) // e.g. TestFR001Parse
-			if !named && !regexp.MustCompile(`// Verifies:.*\b`+id+`\b`).MatchString(src) {
+			if !have[id] {
 				out = append(out, fmt.Sprintf("spec %s is Done but %s has no test (name or // Verifies:)", spec, id))
 			}
 		}
@@ -142,7 +186,7 @@ func pending(root string) []string {
 	var out []string
 	for _, f := range files {
 		b, _ := os.ReadFile(f)
-		for _, m := range regexp.MustCompile(`pending:\s*spec-(\d{3})`).FindAllStringSubmatch(string(b), -1) {
+		for _, m := range pendingRef.FindAllStringSubmatch(string(b), -1) {
 			if _, ok := done[m[1]]; ok {
 				out = append(out, fmt.Sprintf("%s: still pending on spec %s, which is Done", f, m[1]))
 			}

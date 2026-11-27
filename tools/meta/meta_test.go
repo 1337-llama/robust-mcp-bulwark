@@ -30,6 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@` + sha40 + `
       - uses: ./local-action
+      - uses: docker://alpine@sha256:` + strings.Repeat("a", 64) + `
+  matrix:
+    strategy: {matrix: {os: [ubuntu-24.04, macos-15]}}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+  badmatrix:
+    strategy: {matrix: {os: [ubuntu-24.04, self-hosted]}}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
   big:
     runs-on: ubuntu-latest-16-cores
     timeout-minutes: 10
@@ -39,12 +48,12 @@ jobs:
     steps: [{uses: some/action@main}]
 `})
 	got := strings.Join(labels(root), "\n")
-	for _, want := range []string{"job big: runner ubuntu-latest-16-cores", "job big: actions/checkout@v7 is not pinned", "job slow: PR jobs must set timeout-minutes: 10", "job slow: some/action@main is not pinned"} {
+	for _, want := range []string{"job big: runner ubuntu-latest-16-cores", "job big: actions/checkout@v7 is not pinned", "job slow: PR jobs must set timeout-minutes: 10", "job slow: some/action@main is not pinned", "job badmatrix: runner self-hosted"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "job good") {
+	if strings.Contains(got, "job good") || strings.Contains(got, "job matrix:") {
 		t.Errorf("good job flagged:\n%s", got)
 	}
 }
@@ -55,7 +64,7 @@ func TestCoverageAndPending(t *testing.T) {
 	write(t, root, map[string]string{
 		"specs/001-a/spec.md":     "| Status | Done |\n| Traces to | FR-001, FR-002, NFR-003 |\n",
 		"specs/002-b/spec.md":     "| Status | Ready |\n| Traces to | FR-009 |\n",
-		"x/a_test.go":             "// Verifies: FR-001\nfunc TestNFR003Thing(t *testing.T) {}\n",
+		"x/a_test.go":             "package x\n\nimport \"testing\"\n\n// Verifies: FR-001\nfunc TestNFR003Thing(t *testing.T) {}\n\nvar s = \"// Verifies: FR-002\"\n",
 		"lab/scenarios/L-01.yaml": "runs:\n  - pending: spec-001\n  - pending: spec-002\n",
 	})
 	if got := coverage(root); len(got) != 1 || !strings.Contains(got[0], "FR-002") {
