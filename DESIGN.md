@@ -569,7 +569,7 @@ Decision input (v0.1):
 
 `server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from the operator's configuration, which is trusted like the policy files. It is **not** stored in the pin: a second copy could only go stale (decision 39). The configuration digest is in the audit log's `start` record.
 
-Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. Each `derived.<role>` is a list with one element per value (decision 40). An element is `null` when the value didn't parse or the declared argument is absent, and the rule then **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
+Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. Each `derived.<role>` is a list with one element per value (decision 40). An element is `null` when the value didn't parse or a **required** declared argument is absent, and the rule then **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
 
 ```rego
 package bulwark.authz
@@ -613,7 +613,7 @@ deny contains "roles-reviewed" if {
 
 Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **with the baseline allow enabled**; the right rule ID is reported; a `null` element denies; and a policy using a removed built-in fails to load. Policies are also type-checked against the input schema at load time, so a misspelled field fails to load instead of never matching (decision 42).
 
-**Derived attributes** are computed only for declared roles, as lists (one element per string value; array arguments give one per item). An element is `null` when the value doesn't parse or the declared argument is absent:
+**Derived attributes** are computed only for declared roles, as lists (one element per string value; array arguments give one per item). An element is `null` when the value doesn't parse or a required (per the pinned `inputSchema`) declared argument is absent:
 | Role | Element | `null` when |
 |---|---|---|
 | `fs_path` | `{"path"}`: `path.Clean` of the absolute path | Not a string, relative, or contains NUL. Lexical only (AR-10) |
