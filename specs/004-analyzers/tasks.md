@@ -35,3 +35,5 @@ Each task takes under about an hour and can be verified on its own. The test is 
 - [ ] **T20:** README: results-table cells, the metrics table with targets and current values, and the honest note on what an analyzer does and doesn't stop. (AC-19, AC-21a)
 - [ ] **T21:** Benchmarks: the cached gate still passes; cold per-tool time reported. (AC-22)
 - [ ] **T22:** Demonstrate every acceptance criterion with evidence in the PR; set status to `Done`.
+
+**Amendment (decision 43):** T1–T4 write the corpus files to `testdata/corpora/.cache/` (git-ignored) and commit only `source.json` (download and converted-file SHA-256s), `licenses.json`, `NOTICE`, and `baseline.json`; add the CI `corpus` job and the no-tracked-`*.jsonl` test (AC-13a). The `licenses/` texts and the `testdata/corpora/` gitleaks allowlist are dropped.
