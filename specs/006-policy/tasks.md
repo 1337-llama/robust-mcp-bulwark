@@ -18,7 +18,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **CLI and examples**
 - [ ] **T9:** `bulwark policy test` (tester runner with the gateway's capabilities, schema, and baseline; exit 0/3/1) and `--input`. (AC-17, AC-18)
-- [ ] **T10:** `examples/policies/` with the three §5.6 rules and tests, plus the inline-form fixture; CI step. (AC-12, AC-19)
+- [ ] **T10:** `examples/policies/` with the three §5.6 rules and tests; partial-set check; audit-mode `controls` rule; CI step. (AC-3a, AC-12, AC-19, AC-19a)
 
 **Suite, performance, close-out**
 - [ ] **T11:** `lab/policies/` templates (one rule each); remove `pending: spec-006` from L-01, L-03, L-04 run 1, and L-08 run 2; the suite passes on Linux and macOS. (AC-20)

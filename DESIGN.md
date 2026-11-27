@@ -570,7 +570,7 @@ Decision input (v0.1):
 
 `server.id` is the name the operator gave the wrapped server, and `command_digest` identifies what was launched. Both come from Bulwark, not from the server. `tool.arg_roles` comes from the operator's configuration, which is trusted like the policy files. It is **not** stored in the pin: a second copy could only go stale (decision 39). The configuration digest is in the audit log's `start` record.
 
-Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. Each `derived.<role>` is a list with one element per value (decision 40). An element is `null` when the value didn't parse or the declared argument is absent, and the rule then **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
+Example operator policy. Restrictions are `deny` rules keyed on the **server and the declared argument role**. A third rule makes sure a tool approved later can't slip past them. Each `derived.<role>` is a list with one element per value (decision 40). An element is `null` when the value didn't parse or a **required** declared argument is absent, and the rule then **denies**, failing closed. The policy tests in §10.1 check this case for every restriction.
 
 ```rego
 package bulwark.authz
@@ -614,7 +614,7 @@ deny contains "roles-reviewed" if {
 
 Policy tests (`bulwark policy test`, §10.1) include: each restriction blocks **with the baseline allow enabled**; the right rule ID is reported; a `null` element denies; and a policy using a removed built-in fails to load. Policies are also type-checked against the input schema at load time, so a misspelled field fails to load instead of never matching (decision 42).
 
-**Derived attributes** are computed only for declared roles, as lists (one element per string value; array arguments give one per item). An element is `null` when the value doesn't parse or the declared argument is absent:
+**Derived attributes** are computed only for declared roles, as lists (one element per string value; array arguments give one per item). An element is `null` when the value doesn't parse or a required (per the pinned `inputSchema`) declared argument is absent:
 | Role | Element | `null` when |
 |---|---|---|
 | `fs_path` | `{"path"}`: `path.Clean` of the absolute path | Not a string, relative, or contains NUL. Lexical only (AR-10) |
@@ -1123,7 +1123,7 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 37 | Pin re-checks are rate-limited by `pin_recheck_min_age` (default 30 s) | A tiny `ttlMs` or a stream of change notifications must not force a re-check per call (review S5) | — | 2026-11-26 |
 | 38 | Audit records store keyed HMAC-SHA-256 argument values, not plain hashes | Plain hashes of short arguments can be reversed by guessing (review N3) | — | 2026-11-26 |
 | 39 | `arg_roles` are read from configuration at decision time and are not stored in pins | The reason to declare roles is that the server picks argument names; operator configuration already answers that. A pinned copy added no protection and went stale under spec 005's write rules (review B2 on PR #8) | [ADR-0004](docs/adr/0004-policy-engine.md) (amended) | 2026-11-27 |
-| 40 | `derived.<role>` is a list of objects, one per value; `null` for an unparseable or absent declared argument | One tool can carry a role on several arguments (L-03: `to` and `bcc`); `null` elements keep the helper-rule form failing closed, and absence can't skip a restriction | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
+| 40 | `derived.<role>` is a list of objects, one per value; `null` for an unparseable value or an absent required declared argument | One tool can carry a role on several arguments (L-03: `to` and `bcc`); `null` elements keep the helper-rule form failing closed, and absence can't skip a restriction | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 | 41 | No IDNA conversion: a non-ASCII host is `null` (denied by allowlists); allowlists use punycode | The standard library has no IDNA; a dependency for it adds parsing ambiguity at a trust boundary, and denying is the safe default | — | 2026-11-27 |
 | 42 | Policies are type-checked against `schemas/policy-input.v1.json` at load; any load error stops `wrap` in every mode | A misspelled field otherwise makes a `deny` rule silently never fire; a broken policy would make `warn` results misleading too | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 

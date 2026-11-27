@@ -27,7 +27,8 @@ Four spec 001 attack runs become required: L-01 (`policy:fs-workspace-only`), L-
 **Engine (FR-023, NFR-005, T-19)**
 - **AC-1:** THE gateway SHALL embed OPA through `github.com/open-policy-agent/opa/v1/rego`, pinned in `go.mod` (v1.22.4 when this spec was written; OPA's `go.mod` needs Go ≥ 1.26). It loads every `*.rego` file in `policy.dirs` except `*_test.rego`, plus the embedded baseline module, all in package `bulwark.authz` and Rego v1 syntax.
 - **AC-2:** THE policies SHALL be compiled with OPA's capabilities for the pinned version **minus every built-in marked `nondeterministic`**. On v1.22.4 that removes 11 built-ins, the list in DESIGN.md §5.6, checked by a golden test, so an OPA upgrade that changes the list is reviewed. A policy that uses a removed built-in (for example `http.send`) SHALL fail to load.
-- **AC-3:** THE policies SHALL also be compiled against the decision-input JSON Schema (`schemas/policy-input.v1.json`, `additionalProperties: false` throughout) via `rego.Schemas`, so a reference to a field that doesn't exist (for example `input.derived.fs_paht`) fails to load.
+- **AC-3:** THE policies SHALL also be compiled against the decision-input JSON Schema (`schemas/policy-input.v1.json`; Bulwark-defined objects are closed with `additionalProperties: false`, while the server-keyed `arguments` and `request.input_responses` stay open) via `rego.Schemas`, so a reference to a field that doesn't exist (for example `input.derived.fs_paht`) fails to load.
+- **AC-3a:** THE loader SHALL reject a module that defines `deny`, `ask`, or `allow` as anything but a partial set (for example `allow if {...}`), naming the file.
 - **AC-4:** IF any policy fails to load, THEN `wrap` SHALL refuse to start, **in every mode**, with exit code 1 and one `bulwark:` stderr line naming the file and error. A wrong policy would make `warn` results misleading too.
 - **AC-5:** THE query SHALL be prepared once at startup, with strict built-in errors on. Each evaluation SHALL have a deadline of `policy.eval_timeout` (default 50 ms). IF evaluation errors, times out, or returns anything but sets of strings, THEN the decision SHALL be **deny**, control `policy:default-deny`, and the audit record's `reason` `eval_error` or `timeout`.
 - **AC-6 (combiner):** THE decision SHALL be:
@@ -41,7 +42,7 @@ Four spec 001 attack runs become required: L-01 (`policy:fs-workspace-only`), L-
 **Decision input (FR-024)**
 - **AC-9:** THE decision input SHALL follow DESIGN.md §5.6 and validate against `schemas/policy-input.v1.json`. `server` and `tool.pin_status` come from Bulwark, never from the server. `tool.arg_roles` comes from configuration (decision 39). `request.input_responses` is the retry's `inputResponses` object, or `null`. A test validates the input of every call in the suite against the schema.
 - **AC-10:** THE configuration SHALL reject an `arg_roles` value other than `fs_path`, `egress_url`, or `recipient`.
-- **AC-11 (derived values):** FOR each role, `derived.<role>` SHALL be a list with one element per string found in the arguments that carry that role: a string argument gives one element; an array argument gives one element per item; a declared argument that is **absent** from the call gives one `null` element, so omitting it can't skip the restriction. Arguments without a declared role produce nothing. Each element is an object, or `null` when the value doesn't parse:
+- **AC-11 (derived values):** FOR each role, `derived.<role>` SHALL be a list with one element per string found in the arguments that carry that role: a string argument gives one element; an array argument gives one element per item; a declared argument that is absent but listed in the pinned `inputSchema.required` gives one `null` element, so omitting it can't skip the restriction; an absent optional argument gives nothing. Arguments without a declared role produce nothing. Each element is an object, or `null` when the value doesn't parse:
 
   | Role | Element | `null` when |
   |---|---|---|
@@ -50,13 +51,13 @@ Four spec 001 attack runs become required: L-01 (`policy:fs-workspace-only`), L-
   | `recipient` | `{"address", "domain"}`, both lowercased | not a string, not exactly one `@`, an empty side, or non-ASCII |
 
   `net/url` is a parser and opens nothing; the import ban (spec 002 AC-32) covers `net`, `net/http`, and `net/rpc`.
-- **AC-12 (fail closed):** A restriction written with a named helper rule (`not path_ok(p)`) SHALL deny for a `null` element. The example and lab policies SHALL use this form. `bulwark policy test` fixtures SHALL show that it denies, and that the inline form (`not p.host in {...}`) does **not**, which is why the helper form is required (DESIGN.md §5.6).
+- **AC-12 (fail closed):** A restriction written with a named helper rule (`not path_ok(p)`) SHALL deny for a `null` element. The example and lab policies SHALL use this form. `bulwark policy test` fixtures SHALL show that it denies. DESIGN.md §5.6 documents why the inline form (`not p.host in {...}`) must not be used.
 
 **MRTR (FR-035, M-9)**
 - **AC-13 (record):** WHEN a `tools/call`, `prompts/get`, or `resources/read` result has `resultType: "input_required"` under 2026-07-28, THE gateway SHALL record `{method, target (tool name, prompt name, or resource URI), requestState or absent, the inputRequests keys, time}`. The table holds 64 entries with a 10-minute TTL (injected clock), evicting the oldest first. Each entry produces an `mrtr_input_required` audit record. The result is forwarded unchanged.
 - **AC-14 (retry):** A request of one of those three methods that carries `inputResponses` or `requestState` SHALL be treated as a **retry**. It SHALL be matched:
   - by method, target, and exact `requestState` when it has one
-  - otherwise, to the most recent entry for that method and target whose keys include every `inputResponses` key
+  - otherwise, to the most recent entry **recorded without** a `requestState` for that method and target whose keys include every `inputResponses` key (a retry that drops a required state is unmatched)
 
   Two such entries with different key sets make the retry ambiguous, and it is treated as unmatched. A matched entry is removed, so it answers one retry only.
 - **AC-15 (checks):** An unmatched retry SHALL get control `mrtr:unmatched_retry`. A matched retry with an `inputResponses` key that its entry didn't request SHALL get `mrtr:unsolicited_response`. WHILE `mode` is `enforce` AND `mrtr.mode` is `enforce`, either one SHALL block the retry:
@@ -72,6 +73,7 @@ Four spec 001 attack runs become required: L-01 (`policy:fs-workspace-only`), L-
 - **AC-19:** THE repository SHALL ship `examples/policies/` with the three DESIGN.md §5.6 rules and their tests: each rule blocks **with the baseline allow on**, reports its ID, and denies on a `null` element. CI SHALL run `bulwark policy test` on `examples/policies/` and `lab/policies/`.
 
 **Suite and performance**
+- **AC-19a:** AN audit record's `controls` SHALL list only controls whose configured action enforces (`deny`/`redact` secrets, `enforce` MRTR, policy), in any gateway mode; matches under an `audit` action appear in `findings` only. A suite setup test SHALL assert this, so each run's `controls_fired` stays exact.
 - **AC-20:** THE lab policies `lab/policies/l01-fs-workspace-only.rego.tmpl`, `l03-recipient-domain.rego.tmpl`, and `l04-http-allowlist.rego.tmpl` SHALL each hold exactly one `deny` rule, so `controls_fired` is exact. The `pending: spec-006` expectations of L-01, L-03, L-04 (first run), and L-08 (run 2) SHALL become required, and the suite SHALL pass on Linux and macOS:
 
   | Run | `setup.arg_roles` | `enforce` | `warn` |
