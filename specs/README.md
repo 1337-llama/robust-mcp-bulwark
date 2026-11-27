@@ -13,4 +13,4 @@ Each spec is one vertical slice of v0.1, traced to requirements in [DESIGN.md](.
 | [005](005-tools-cli/spec.md) | `tools` CLI: list, diff, approve, reject | M2 | Ready |
 | [006](006-policy/spec.md) | Policy engine, argument roles, MRTR checks, `policy test` | M3 | Ready |
 | [007](007-secrets/spec.md) | Secret detection and redaction | M3 | Ready |
-| 008 | One-command demo and release pipeline | M3 | Planned |
+| [008](008-release/spec.md) | One-command demo and release pipeline | M3 | Ready on merge |
