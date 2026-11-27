@@ -100,3 +100,14 @@ func (o *Obs) Record(event, tool string, canaries []string) error {
 	}
 	return err
 }
+
+// DecodeTags maps Unicode Tag characters (U+E0020–U+E007E) back to ASCII, so
+// markers hidden that way (L-06) are visible to the observables.
+func DecodeTags(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 0xE0020 && r <= 0xE007E {
+			return r - 0xE0000
+		}
+		return r
+	}, s)
+}
