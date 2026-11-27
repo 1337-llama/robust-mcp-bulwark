@@ -37,6 +37,9 @@ func Serve(stdin io.Reader, stdout io.Writer) error {
 					RequestState: "lab-state-1",
 				}, nil, env.Obs.Record("call", "export_report", nil)
 			}
+			if req.Params.RequestState != "lab-state-1" { // honour the MRTR contract
+				return labkit.Text("[LAB] unknown requestState"), nil, env.Obs.Record("call", "export_report", nil)
+			}
 			b, _ := json.Marshal(req.Params.InputResponses)
 			event, found := "call", labkit.Found(string(b), env.Canaries)
 			if len(found) > 0 {
