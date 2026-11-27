@@ -3,6 +3,7 @@
 //	meta labels   workflows use standard runners, SHA-pinned actions, 10-minute timeouts
 //	meta coverage every requirement traced by a Done spec is named by a test
 //	meta pending  no manifest still waits on a Done spec
+//	meta trace F  the strace output F has no AF_INET/AF_INET6 socket (AC-21)
 package main
 
 import (
@@ -20,8 +21,20 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "trace" {
+		b, err := os.ReadFile(os.Args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if bad := inetSockets(string(b)); len(bad) > 0 {
+			fmt.Println(strings.Join(bad, "\n"))
+			os.Exit(3)
+		}
+		return
+	}
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: meta labels|coverage|pending")
+		fmt.Fprintln(os.Stderr, "usage: meta labels|coverage|pending | meta trace FILE")
 		os.Exit(2)
 	}
 	checks := map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending}
@@ -194,4 +207,25 @@ func pending(root string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+var (
+	inetSocket = regexp.MustCompile(`\bsocket(pair)?\((AF|PF)_INET6?\b`)
+	labExec    = regexp.MustCompile(`\bexecve\("[^"]*bulwark-lab"`)
+)
+
+// inetSockets returns every strace line that creates an internet socket, from
+// any process (strace -f prefixes lines with the PID). AF_UNIX is allowed. A
+// trace with no execve of bulwark-lab proves nothing, so it fails too.
+func inetSockets(trace string) []string {
+	var bad []string
+	if !labExec.MatchString(trace) {
+		bad = append(bad, "trace shows no execve of bulwark-lab: the lab servers did not run under strace")
+	}
+	for _, line := range strings.Split(trace, "\n") {
+		if inetSocket.MatchString(line) {
+			bad = append(bad, line)
+		}
+	}
+	return bad
 }

@@ -24,9 +24,12 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	labBin = filepath.Join(dir, "bulwark-lab")
-	if out, err := exec.Command("go", "build", "-o", labBin, "../cmd/bulwark-lab").CombinedOutput(); err != nil {
-		panic(string(out))
+	labBin = os.Getenv("BULWARK_LAB_BIN") // prebuilt in CI, where the suite runs without a network
+	if labBin == "" {
+		labBin = filepath.Join(dir, "bulwark-lab")
+		if out, err := exec.Command("go", "build", "-o", labBin, "../cmd/bulwark-lab").CombinedOutput(); err != nil {
+			panic(string(out))
+		}
 	}
 	code := m.Run()
 	os.RemoveAll(dir)

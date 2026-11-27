@@ -1,0 +1,53 @@
+name: suite
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update -qq && sudo apt-get install -y strace
+      - name: Build (network allowed only here)
+        run: |
+          go build -o "$RUNNER_TEMP/bulwark-lab" ./lab/cmd/bulwark-lab
+          go test -c -o "$RUNNER_TEMP/suite.test" ./lab/suite
+          go build -o "$RUNNER_TEMP/meta" ./tools/meta
+          go build -o "$RUNNER_TEMP/ci-summary" ./tools/ci-summary
+      - name: Suite twice, in an empty network namespace, as the runner user, traced (AC-21, AC-22, AC-30)
+        working-directory: lab/suite
+        run: |
+          for i in 1 2; do
+            sudo unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+              env CI=true HOME="$HOME" BULWARK_LAB_BIN="$RUNNER_TEMP/bulwark-lab" BULWARK_RESULTS="$RUNNER_TEMP/results-$i.json" \
+              strace -f -qq -e trace=%network,execve -o "$RUNNER_TEMP/trace-$i.txt" "$RUNNER_TEMP/suite.test" -test.count=1
+          done
+      - name: No internet sockets in either trace
+        run: |
+          "$RUNNER_TEMP/meta" trace "$RUNNER_TEMP/trace-1.txt"
+          "$RUNNER_TEMP/meta" trace "$RUNNER_TEMP/trace-2.txt"
+      - name: Both runs identical (NFR-008)
+        run: '"$RUNNER_TEMP/ci-summary" -compare "$RUNNER_TEMP/results-1.json" "$RUNNER_TEMP/results-2.json"'
+      - name: Results table
+        if: always()
+        run: '[ ! -f "$RUNNER_TEMP/results-1.json" ] || "$RUNNER_TEMP/ci-summary" "$RUNNER_TEMP/results-1.json" >> "$GITHUB_STEP_SUMMARY"'
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Suite once (AC-24)
+        run: BULWARK_RESULTS="$RUNNER_TEMP/results.json" go test -count=1 ./lab/suite
+      - name: Results table
+        if: always()
+        run: '[ ! -f "$RUNNER_TEMP/results.json" ] || go run ./tools/ci-summary "$RUNNER_TEMP/results.json" >> "$GITHUB_STEP_SUMMARY"'
