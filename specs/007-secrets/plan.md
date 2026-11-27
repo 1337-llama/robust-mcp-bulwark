@@ -46,8 +46,8 @@ func Redact(s string) (string, []Match)    // replaces each match with "[REDACTE
 | AC-1 | Unit: each rule positive and negative (including `AKIAIOSFODNN7EXAMPLE`; `sk_test_…` not matched by `stripe-live-key`; a PEM block without an END line not matched); the rules file lists the gitleaks commit | `internal/redact/rules_test.go` |
 | AC-2 | Unit: every manifest's `secret` canary matches `aws-access-key`; every `plain` canary matches nothing | `lab/suite/canary_test.go` |
 | AC-3 | Unit: a secret in a nested argument, an object key, `structuredContent`, an error `data`, resource text, and behind a `A` escape is found; a base64 blob is not scanned | `internal/pipeline/secrets_test.go` |
-| AC-4–AC-6 | Integration through `bulwark wrap`: `deny`, `redact`, and `audit` for requests; `redact` and `audit` for results; `warn` forwards unchanged | `internal/proxy/secrets_test.go` |
-| AC-7 | Unit: overlapping and adjacent matches; two keys in one string; no fragment remains | `internal/redact/redact_test.go` |
+| AC-4–AC-6 | Integration through `bulwark wrap`: `deny`, `redact`, and `audit` for requests; `redact` and `audit` for results; `warn` forwards requests unchanged and still redacts results | `internal/proxy/secrets_test.go` |
+| AC-7 | Unit: overlapping and adjacent matches; two keys in one string; no fragment remains; a trailing `;` survives (group 1); two secret keys in one object stay distinct | `internal/redact/redact_test.go` |
 | AC-8, AC-9 | After the suite: grep the audit directory and stderr captures for every secret canary → none; analyzer excerpts use `redact.Redact` | `lab/suite/leak_test.go` |
 | AC-10 | The suite with the AC-10 expectations required | `lab/suite` |
 | AC-11 | Benchmark | `internal/pipeline/bench_test.go` |
