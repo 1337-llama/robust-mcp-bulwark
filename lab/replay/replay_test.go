@@ -35,6 +35,9 @@ func (f *fake) serve(in io.Reader, out io.Writer) {
 		id, ok := m["id"]
 		if !ok || mute || m["method"] == "subscriptions/listen" {
 			if m["method"] == "subscriptions/listen" {
+				for i := 0; i < 100; i++ { // noise must not push out the awaited notification
+					io.WriteString(out, `{"jsonrpc":"2.0","method":"notifications/progress"}`+"\n")
+				}
 				io.WriteString(out, `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`+"\n")
 			}
 			continue
@@ -144,7 +147,7 @@ func TestRun2026(t *testing.T) {
 			recvs++
 		}
 	}
-	if sends != 7 || recvs != 6 {
+	if sends != 7 || recvs != 106 {
 		t.Errorf("transcript: %d sent, %d received", sends, recvs)
 	}
 }

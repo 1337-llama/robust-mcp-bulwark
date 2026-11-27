@@ -50,8 +50,8 @@ func scan(path string, src []byte) []string {
 			}
 		}
 	}
-	// AC-9 covers what runs as a lab server; the replay client and runner need timeouts.
-	server := strings.HasPrefix(path, "servers/") || strings.HasPrefix(path, "labkit/") || strings.HasPrefix(path, "cmd/") || path == "x.go"
+	// AC-9 covers every lab package except the test drivers, which need timeouts.
+	server := !strings.HasPrefix(path, "replay/") && !strings.HasPrefix(path, "suite/") && !strings.HasPrefix(path, "manifest/")
 	ast.Inspect(f, func(n ast.Node) bool {
 		if !server {
 			return false

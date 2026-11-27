@@ -33,7 +33,10 @@ type Client struct {
 	nextID  int
 	seq     int
 	waiting map[int]chan json.RawMessage
-	notes   chan json.RawMessage
+	seen    map[string]int // notifications received, by method
+	used    map[string]int // notifications consumed by wait_notification
+	noteSig chan struct{}
+	readErr error
 	trans   io.Writer
 	done    chan struct{}
 	last    map[string]any // result of the previous call (for requestState echo)
@@ -42,7 +45,7 @@ type Client struct {
 // New starts reading r. transcript receives one JSON line per message (AC-12).
 func New(r io.Reader, w io.Writer, rev string, transcript io.Writer) *Client {
 	c := &Client{rev: rev, w: w, Timeout: 5 * time.Second, waiting: map[int]chan json.RawMessage{},
-		notes: make(chan json.RawMessage, 64), trans: transcript, done: make(chan struct{})}
+		seen: map[string]int{}, used: map[string]int{}, noteSig: make(chan struct{}, 1), trans: transcript, done: make(chan struct{})}
 	go c.read(r)
 	return c
 }
@@ -75,10 +78,17 @@ func (c *Client) read(r io.Reader) {
 		}
 		switch {
 		case m.Method != "" && m.ID == nil:
+			c.mu.Lock()
+			c.seen[m.Method]++ // counted, not buffered, so a flood can't push out the one we wait for
+			c.mu.Unlock()
 			select {
-			case c.notes <- json.RawMessage(line):
-			default: // a flood of notifications never blocks the reader
+			case c.noteSig <- struct{}{}:
+			default:
 			}
+		case m.Method != "" && m.ID != nil:
+			// Server-initiated request: not supported by the replay client.
+			b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "error": map[string]any{"code": -32601, "message": "Method not found"}})
+			c.SendRaw(string(b))
 		case m.Method == "" && m.ID != nil:
 			c.mu.Lock()
 			ch := c.waiting[*m.ID]
@@ -89,9 +99,19 @@ func (c *Client) read(r io.Reader) {
 			}
 		}
 	}
+	if err := sc.Err(); err != nil {
+		c.record("error", err.Error())
+		c.mu.Lock()
+		c.readErr = err
+		c.mu.Unlock()
+	}
 }
 
-// SendRaw writes one line verbatim (AC-14).
+// Done is closed when the server's stdout reaches EOF.
+func (c *Client) Done() <-chan struct{} { return c.done }
+
+// SendRaw writes one line verbatim (AC-14). The send_raw script step applies
+// template substitution ({{canaries.*}}, {{lab_dir}}) to the line first.
 func (c *Client) SendRaw(line string) error {
 	c.record("send", line)
 	_, err := io.WriteString(c.w, line+"\n")
@@ -141,6 +161,11 @@ func (c *Client) Request(method string, params map[string]any) (json.RawMessage,
 	case resp := <-ch:
 		return resp, nil
 	case <-c.done:
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.readErr != nil {
+			return nil, fmt.Errorf("replay: reading server output: %w", c.readErr)
+		}
 		return nil, errors.New("replay: server closed stdout")
 	case <-time.After(c.Timeout):
 		return nil, ErrTimeout
@@ -260,14 +285,20 @@ func (c *Client) step(s manifest.Step, v Vars) error {
 			return err
 		}
 	case s.WaitNotification != nil:
+		method := s.WaitNotification.Method
 		deadline := time.After(c.Timeout)
 		for {
+			c.mu.Lock()
+			ok := c.seen[method] > c.used[method]
+			if ok {
+				c.used[method]++
+			}
+			c.mu.Unlock()
+			if ok {
+				return nil
+			}
 			select {
-			case n := <-c.notes:
-				var m struct{ Method string }
-				if json.Unmarshal(n, &m) == nil && m.Method == s.WaitNotification.Method {
-					return nil
-				}
+			case <-c.noteSig:
 			case <-deadline:
 				return ErrTimeout
 			}
