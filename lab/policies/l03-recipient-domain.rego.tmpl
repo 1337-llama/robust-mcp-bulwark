@@ -1,0 +1,9 @@
+# LAB ONLY: L-03 policy run (spec 006 AC-20).
+package bulwark.authz
+
+deny contains "recipient-domain" if {
+	some r in input.derived.recipient
+	not domain_ok(r)
+}
+
+domain_ok(r) if r.domain == "example.com"

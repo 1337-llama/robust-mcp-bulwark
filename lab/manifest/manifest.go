@@ -54,6 +54,15 @@ type Run struct {
 	KnownGap string                    `yaml:"known_gap"`
 	Setup    Setup                     `yaml:"setup"`
 	Expect   map[string]map[string]any `yaml:"expect"`
+	Script   []Step                    `yaml:"script"` // optional: replaces the manifest script for this run
+}
+
+// Steps returns the script this run replays.
+func (m *Manifest) Steps(r Run) []Step {
+	if r.Script != nil {
+		return r.Script
+	}
+	return m.Script
 }
 
 type Setup struct {
@@ -205,7 +214,11 @@ func (m *Manifest) validate(a *Allowlist) error {
 		}
 	}
 	var called []string
-	for i, s := range m.Script {
+	all := append([]Step{}, m.Script...)
+	for _, r := range m.Runs {
+		all = append(all, r.Script...)
+	}
+	for i, s := range all {
 		set := 0
 		for _, p := range []bool{s.Discover != nil, s.ListTools != nil, s.Call != nil, s.Subscribe != nil, s.WaitNotification != nil, s.SendRaw != nil} {
 			if p {
