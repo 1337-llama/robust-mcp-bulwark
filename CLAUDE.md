@@ -39,6 +39,9 @@ A security gateway for AI agents: an MCP proxy that pins and inspects tool defin
 - **Flag uncertainty with `VERIFY:`.** Never invent standard IDs, API names, library features, or statistics. Resolve every `VERIFY:` before the design is approved.
 - **Keep it current.** Update the DESIGN.md document control table (version, date, status) on every change.
 
+## Keep it lean
+Apply the `ponytail` skill (`.claude/skills/`) to all specs and code: the smallest change that fully solves the task, and nothing nobody asked for. Use `ponytail-review` as an extra pass when reviewing. This file wins on any conflict: required sections (alternatives considered, threat models, tests) and every security check are scope, not bloat.
+
 ## Style
 - Write concise technical prose. Prefer tables and Mermaid diagrams to long paragraphs.
 - Every design choice needs a reason. "Alternatives considered" sections are required.
