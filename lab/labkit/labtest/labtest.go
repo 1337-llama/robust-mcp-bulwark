@@ -25,9 +25,15 @@ type Result struct {
 func Run(t *testing.T, serve func(io.Reader, io.Writer) error, rev, script string, canaries map[string]string) Result {
 	t.Helper()
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "private"), 0o700)
-	os.MkdirAll(filepath.Join(dir, "workspace"), 0o700)
-	os.WriteFile(filepath.Join(dir, "private", "secret.txt"), []byte(canaries["plain"]+"\n"), 0o600)
+	for _, err := range []error{
+		os.MkdirAll(filepath.Join(dir, "private"), 0o700),
+		os.MkdirAll(filepath.Join(dir, "workspace"), 0o700),
+		os.WriteFile(filepath.Join(dir, "private", "secret.txt"), []byte(canaries["plain"]+"\n"), 0o600),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	obs := filepath.Join(dir, "obs.jsonl")
 	cj, _ := json.Marshal(canaries)
 	t.Setenv("BULWARK_LAB_CANARIES", string(cj))
