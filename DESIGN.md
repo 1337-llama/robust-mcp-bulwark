@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.10 |
+| Version | 0.11.11 |
 | Last updated | 2026-11-27 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -32,6 +32,7 @@
 | 0.11.8 | 2026-11-27 | Spec 005: observation file separate from the pins file (§6.4); `tools` CLI flags with fingerprint-checked approval, and `approve --command` for a changed `command_digest` (§6.1); `arg_roles` come from configuration only and are no longer stored in pins (§5.6, §6.3, §6.4; decision 39) |
 | 0.11.9 | 2026-11-27 | Spec 006: derived values are lists of objects with `null` for unparseable or absent values; no IDNA; policies type-checked against the input schema; a policy load error stops `wrap` in every mode; `-32011` for blocked MRTR retries on prompts and resources (§5.6, §6.6; decisions 40–42) |
 | 0.11.10 | 2026-11-27 | Spec 007: secret rules copied from gitleaks at a pinned commit (§5.5); canary format fixed to the real AWS key alphabet (§6.7) |
+| 0.11.11 | 2026-11-27 | Corpora are downloaded and hash-checked in CI, never committed (§5.4; decision 43, maintainer) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -525,7 +526,7 @@ Excerpts are at most 120 characters, secret-redacted, and stored as escaped text
 The rules are data: a versioned YAML file embedded in the binary (`go:embed`), using Go's RE2 engine (linear time, no ReDoS). The seed notes' `text.sensitive_ref`, `annotation.mismatch`, and `size.anomaly` analyzers move to v0.2.
 
 **Detection corpora (FR-006):**
-- **Poisoned:** all 485 poisoned tool descriptions in MCPTox's `pure_tool.json` (github.com/zhiqiangwang4/MCPTox-Benchmark, CC BY 4.0, AAAI 2026), with attribution in a NOTICE file.
+- **Poisoned:** all 485 poisoned tool descriptions in MCPTox's `pure_tool.json` (github.com/zhiqiangwang4/MCPTox-Benchmark, CC BY 4.0, AAAI 2026), with attribution in a NOTICE file. Neither corpus is committed: CI downloads the pinned files and checks their SHA-256 (decision 43).
 - **Benign:** the clean, authentic tool definitions of the same real-world servers, from MCPTox's `response_all.json`. These texts come from third-party servers, which MCPTox's license doesn't cover, so only the 42 servers with a permissive upstream license file are kept (322 tools; per-server license and URL recorded). This is larger and better matched than the official reference-servers repository, which now has only 7 servers (spec 004).
 
 Both corpora are split **by server** (`sha256(server)[0] & 1`): whole servers go into a **tuning** half (used while writing rules) or a **held-out** half. CI reports detection and false-positive rates per analyzer **on the held-out half**, with Wilson 95 % intervals, so the rules can't simply be fitted to the test data.
@@ -1126,6 +1127,7 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 40 | `derived.<role>` is a list of objects, one per value; `null` for an unparseable value or an absent required declared argument | One tool can carry a role on several arguments (L-03: `to` and `bcc`); `null` elements keep the helper-rule form failing closed, and absence can't skip a restriction | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 | 41 | No IDNA conversion: a non-ASCII host is `null` (denied by allowlists); allowlists use punycode | The standard library has no IDNA; a dependency for it adds parsing ambiguity at a trust boundary, and denying is the safe default | — | 2026-11-27 |
 | 42 | Policies are type-checked against `schemas/policy-input.v1.json` at load; any load error stops `wrap` in every mode | A misspelled field otherwise makes a `deny` rule silently never fire; a broken policy would make `warn` results misleading too | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
+| 43 | No third-party corpus text in the repository: CI downloads the pinned MCPTox files, verifies SHA-256, and converts them into a git-ignored cache | Maintainer decision; avoids redistributing third-party text. Results stay reproducible through pinned commits and hashes | — | 2026-11-27 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:

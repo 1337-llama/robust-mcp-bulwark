@@ -19,3 +19,4 @@ logs/
 # Secrets
 .env
 .env.*
+testdata/corpora/.cache/
