@@ -10,13 +10,20 @@ import (
 	"strings"
 
 	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l01notes"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l02weather"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l03mail"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l04webnotes"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l05translate"
 	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l06calc"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l07docs"
+	"github.com/1337-llama/robust-mcp-bulwark/lab/servers/l08vault"
 )
 
 // servers maps a lab server name to its entry point.
 var servers = map[string]func(stdin io.Reader, stdout io.Writer) error{
-	"l01-notes": l01notes.Serve,
-	"l06-calc":  l06calc.Serve,
+	"l01-notes": l01notes.Serve, "l02-weather": l02weather.Serve, "l03-mail": l03mail.Serve,
+	"l04-web-notes": l04webnotes.Serve, "l05-translate": l05translate.Serve, "l06-calc": l06calc.Serve,
+	"l07-docs": l07docs.Serve, "l08-vault": l08vault.Serve,
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr)) }
