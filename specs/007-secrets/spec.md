@@ -34,8 +34,8 @@ The rules are a small set of public patterns, taken from gitleaks (MIT), not wri
   | `private-key` | `private-key` | high |
   | `jwt` | `jwt` | medium |
 
-  gitleaks' entropy thresholds are not used (DESIGN.md §5.5: patterns only in v0.1). Each rule SHALL have positive and negative unit tests, including the AWS documentation example `AKIAIOSFODNN7EXAMPLE`.
-- **AC-2:** THE suite's canaries SHALL be checked against this rule set: every `secret` canary matches `aws-access-key`, and every `plain` canary matches no rule. This replaces spec 001's interim pattern list (spec 001 AC-31 is amended in this PR).
+  gitleaks' entropy thresholds and allowlists (including `.+EXAMPLE$`) are not used. Where a rule has a capture group, only **group 1** is the match, so trailing delimiters some rules consume are never redacted or counted (DESIGN.md §5.5: patterns only in v0.1). Each rule SHALL have positive and negative unit tests, including the AWS documentation example `AKIAIOSFODNN7EXAMPLE`.
+- **AC-2:** THE suite's canaries SHALL be checked against this rule set: every `secret` canary matches `aws-access-key`, and every `plain` canary matches no rule. This replaces spec 001's interim pattern list (spec 001 AC-31 is amended in this PR). Because the repository's own gitleaks scan would flag these canaries, `.gitleaks.toml` SHALL allowlist exactly the regex `AKIAEXAMPLECANARYL[A-H]Z` (spec 004 AC-16b is amended to allow this one pattern).
 
 **Where (FR-025)**
 - **AC-3:** THE scanner SHALL apply the rules to every **decoded** string value and object key in:
@@ -54,8 +54,8 @@ The rules are a small set of public patterns, taken from gitleaks (MIT), not wri
 - **AC-5:** WHILE `mode` is `enforce`, a result match SHALL act per `secrets.results`:
   - `redact` (default): replace every match with `[REDACTED:<rule>]`, then re-serialize.
   - `audit`: forward unchanged and record.
-- **AC-6:** WHILE `mode` is `warn` or `learn`, matches SHALL be recorded and the message forwarded unchanged, consistent with "nothing is blocked" in `warn` (§6.1).
-- **AC-7:** WHERE several rules match overlapping text, THE longest match SHALL win, and ties go to the rule listed first in AC-1. Every match in a string is replaced, so no fragment of a secret is left.
+- **AC-6:** WHILE `mode` is `warn` or `learn`, request matches SHALL be recorded and forwarded unchanged (nothing is blocked), and result matches SHALL still be redacted per `secrets.results`. Redaction blocks nothing, so the default install keeps secrets away from the model.
+- **AC-7:** WHERE several rules match overlapping text, THE longest match SHALL win, and ties go to the rule listed first in AC-1. Every match in a string is replaced, so no fragment of a secret is left. A redacted object key gets a per-object counter (`[REDACTED:<rule>:<n>]`), so redaction never creates duplicate keys (spec 002 AC-7b).
 
 **Audit (T-10)**
 - **AC-8:** EACH match SHALL add a finding `{analyzer: "secrets", rule, severity, location (JSON Pointer)}` to the message's audit record, plus the control when it blocked. The excerpt SHALL be the redacted string, so **no audit record, finding, or stderr line contains a matched secret**. A test scans the whole audit directory after the suite for each secret canary.
