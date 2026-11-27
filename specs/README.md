@@ -10,7 +10,7 @@ Each spec is one vertical slice of v0.1, traced to requirements in [DESIGN.md](.
 | [002](002-stdio-proxy/spec.md) | stdio proxy, strict JSON-RPC, revision handling, audit log, terminal-safe output | M1 | Ready |
 | [003](003-pinning/spec.md) | Fingerprinting, pin store, modes, verify-before-call, server metadata | M2 | Ready |
 | [004](004-analyzers/spec.md) | Static analyzers on all channels + detection corpora | M2 | Ready |
-| [005](005-tools-cli/spec.md) | `tools` CLI: list, diff, approve, reject | M2 | Ready on merge |
+| [005](005-tools-cli/spec.md) | `tools` CLI: list, diff, approve, reject | M2 | Ready |
 | [006](006-policy/spec.md) | Policy engine, argument roles, MRTR checks, `policy test` | M3 | Ready on merge |
 | 007 | Secret detection and redaction | M3 | Planned |
 | 008 | One-command demo and release pipeline | M3 | Planned |
