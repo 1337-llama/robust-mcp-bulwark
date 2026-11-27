@@ -112,6 +112,8 @@ For a `warn` or `enforce` cell, the runner:
 The three configuration keys are added to DESIGN.md §6.3 in this PR. Each control's spec implements its key.
 
 ## Scenario designs
+**Payload files (amended by spec 004, AC-20):** each lab server's attack text lives in `lab/servers/<server>/payload.txt`, based on a cited public example (AC-8; for instance a matching MCPTox item), and loaded by the server at start. Payloads are frozen once spec 001 is done. A `meta` check rejects a PR that changes both a payload and the analyzer rules, so neither is fitted to the other.
+
 Every tool description and server name carries `[LAB]` (AC-7). Every payload carries `POISON-Lxx`.
 
 | ID | Lab server | What the server does | Replay (hijacked agent) | Required under `none` | Control runs (pending until) |
