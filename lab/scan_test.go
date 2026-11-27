@@ -50,7 +50,12 @@ func scan(path string, src []byte) []string {
 			}
 		}
 	}
+	// AC-9 covers every lab package except the test drivers, which need timeouts.
+	server := !strings.HasPrefix(path, "replay/") && !strings.HasPrefix(path, "suite/") && !strings.HasPrefix(path, "manifest/")
 	ast.Inspect(f, func(n ast.Node) bool {
+		if !server {
+			return false
+		}
 		if s, ok := n.(*ast.SelectorExpr); ok && timeName != "" && clockFuncs[s.Sel.Name] {
 			if id, ok := s.X.(*ast.Ident); ok && id.Name == timeName {
 				out = append(out, path+": reads the clock with time."+s.Sel.Name+" (AC-9)")
