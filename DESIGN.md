@@ -27,7 +27,7 @@
 | 0.11.2 | 2026-11-26 | From the spec 001 review: configuration keys `analyzers.enabled` and `mrtr.mode` added to §6.3 (needed to enable one control per suite run, FR-004); §6.7 points to the full manifest format |
 | 0.11.3 | 2026-11-26 | From the spec 002 review: error addressing for rejected messages (§6.6); `termsafe` defined by Unicode category (§4.2); AR-6 notes the one-second `fsync` window |
 | 0.11.4 | 2026-11-26 | Spec 003: a pin-store change on disk also marks the tool view stale (§5.3) |
-| 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins |
+| 0.11.5 | 2026-11-27 | From the spec 003 review: `ttlMs` normalization, two-tier re-check rate limit with fail-closed when rate-limited, gateway-request timeout and pagination caps (§5.3, §6.3); `learn` never changes rejected pins. Re-check fix: the age threshold is never below `pin_recheck_min_age`, and pin-store changes use the 1 s event tier |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -495,8 +495,8 @@ This identifies *what was asked to launch*, not every file the server loads. A c
 
 **Re-check schedule (FR-030; details in spec 003):**
 - **Normalizing `ttlMs`:** values that are missing, zero or negative, non-integer, non-finite, or above 2^31 count as no hint, so a server can't switch off age-based re-checks with a bad value.
-- **When the view is stale:** after a `ToolViewStale` event; when its age exceeds `min(ttlMs, pin_recheck_max_age)`; or when the pin store changes on disk (for example after a CLI approval).
-- **Rate limits:** re-checks after a notification run at most once per second; others at most once per `pin_recheck_min_age` (default 30 s). In `enforce` mode, a call that arrives while the view is stale and a re-check isn't yet allowed is **blocked** (`pin.recheck_pending`). So a notification flood can only hurt the server's own availability; it can't skip the check.
+- **When the view is stale:** after an **event**, meaning a `ToolViewStale` notification or a pin-store change on disk (for example after a CLI approval); or **by age**, when its age exceeds `max(min(ttlMs, pin_recheck_max_age), pin_recheck_min_age)`, which is never earlier than an age re-check is allowed.
+- **Rate limits:** event-triggered re-checks run at most once per second; age-triggered ones at most once per `pin_recheck_min_age` (default 30 s, and must not exceed `pin_recheck_max_age`). In `enforce` mode, a call that arrives while the view is stale and a re-check isn't yet allowed is **blocked** (`pin.recheck_pending`). That can happen only within a second of an event, so honest servers aren't blocked, and a notification flood can only hurt the server's own availability.
 - **Gateway-originated requests** carry the triggering client request's `_meta`, time out after `limits.gateway_request_timeout` (10 s), and follow `nextCursor` for at most 100 pages or 16 MiB, failing closed beyond that.
 
 **Diffs** (`bulwark tools diff`) show a path-based structural diff of the JSON plus a line diff for long strings. All untrusted text goes through `termsafe` (FR-029).

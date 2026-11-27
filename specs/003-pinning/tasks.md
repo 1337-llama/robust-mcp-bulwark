@@ -28,7 +28,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 - [ ] **T17:** Timeout (`limits.gateway_request_timeout`, 10 s) and failure handling: discover failure → reduced metadata; re-check failure → call blocked (`pin.recheck_failed`). (AC-15b)
 - [ ] **T18:** Paginated re-check `tools/list`, with the 100-page and 16 MiB caps and fail-closed behavior. (AC-15c)
 - [ ] **T19:** `ttlMs` normalization table test (`-1`, `0`, `1`, `1.5`, `1e300`, absent, mixed across pages), then `normalize`. (AC-16)
-- [ ] **T20:** `view.go` staleness triggers with an injected clock; the two-tier rate limiter (notification re-checks at 1 s, age re-checks at `min_age`); stale while rate-limited → `pin.recheck_pending`. (AC-16a, AC-17, AC-17a)
+- [ ] **T20:** `view.go` staleness with an injected clock: `ageThreshold = max(min(ttl, maxAge), minAge)`; event triggers (notification, store change) on the 1 s tier; age re-checks at `min_age`; the `ttlMs: 1000` 60-second test with zero blocks; stale while rate-limited → `pin.recheck_pending`; configuration validation `min_age <= max_age`. (AC-16a, AC-16b, AC-17, AC-17a)
 - [ ] **T21:** Verify-before-call integration: a fake upstream changes a tool **without** notifying; the call is blocked on fingerprint mismatch. (AC-17)
 - [ ] **T22:** Record raw `ttlMs`, `cacheScope`, and the normalized hint in audit records. (AC-18)
 

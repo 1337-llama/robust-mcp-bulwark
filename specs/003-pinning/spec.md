@@ -70,14 +70,15 @@ Two spec 001 attack tests become real: **L-02** (rug pull, `pin:changed`) and **
 - **AC-16:** THE gateway SHALL normalize every `ttlMs` before use. A value that is missing (always under 2025-11-25), zero or negative, not an integer, not finite, or above 2^31 SHALL count as **no hint**. Across the pages of one listing, the smallest valid value is used.
 - **AC-16a:** THE gateway SHALL mark its tool view **stale** WHEN any of these happens:
   - a `notifications/tools/list_changed` arrives (spec 002 AC-33 guarantees it is processed)
-  - the view's age exceeds `min(ttlMs, pin_recheck_max_age)`, or `pin_recheck_max_age` alone when there is no hint
-  - the pin store's `(device, inode, size, mtime)` changes, in which case the store is reloaded under its lock
+  - **by age:** the view's age exceeds `max(min(ttlMs, pin_recheck_max_age), pin_recheck_min_age)`, or `pin_recheck_max_age` when there is no hint. A short but valid `ttlMs` therefore never makes the view stale before an age-based re-check is allowed, so honest servers are never blocked by AC-17a.
+  - **by event:** the pin store's `(device, inode, size, mtime)` changes, in which case the store is reloaded under its lock
+- **AC-16b:** THE configuration SHALL be rejected IF `pin_recheck_min_age` > `pin_recheck_max_age`, except when both are 0 (opt-in re-check before every call).
 - **AC-17:** WHILE in `enforce` mode, WHEN a `tools/call` arrives and the view is stale, THE gateway SHALL fetch `tools/list` itself (AC-15a–c) before deciding. Re-checks are rate-limited:
-  - **after a notification:** at most one re-check per second, with notifications coalesced
-  - **otherwise:** at most one per `pin_recheck_min_age` (default 30 s)
+  - **event-triggered staleness** (a notification or a pin-store change): at most one re-check per second, with events coalesced
+  - **age-triggered staleness:** at most one per `pin_recheck_min_age` (default 30 s). By AC-16a this is never stricter than the staleness itself.
 
   IF the called tool's fingerprint no longer matches its approved pin, THEN the call SHALL be blocked as in AC-12, with finding `pin.changed`.
-- **AC-17a:** WHILE in `enforce` mode, IF the view is stale AND a re-check is not yet allowed by the rate limit, THEN THE call SHALL be blocked as in AC-12, with finding `pin.recheck_pending`, until a re-check succeeds. A server that floods notifications can therefore hurt only its own availability, never skip the check.
+- **AC-17a:** WHILE in `enforce` mode, IF the view is stale AND a re-check is not yet allowed by the rate limit, THEN THE call SHALL be blocked as in AC-12, with finding `pin.recheck_pending`, until a re-check succeeds. By AC-16a and AC-17, this can happen only within one second of an event, so a server that floods notifications can hurt only its own availability, never skip the check. A test with `ttlMs: 1000` and calls spread over 60 s SHALL show **no** `pin.recheck_pending` blocks.
 - **AC-18:** THE gateway SHALL record each `tools/list` result's raw `ttlMs` and `cacheScope` values, and the normalized hint, in its audit record.
 
 **Suite (spec 001 expectations become required)**

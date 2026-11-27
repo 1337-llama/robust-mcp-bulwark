@@ -53,8 +53,11 @@ The same table applies to metadata, with "hidden" meaning "reduced" (AC-13). Dup
 
 **Normalization, staleness, and re-check** (clock injected for deterministic tests, NFR-008):
 - `ttl := normalize(ttlMs)`: missing, ≤ 0, non-integer, non-finite, or > 2^31 → none. Across pages, take the minimum valid value.
-- `stale := listChangedSeen || age > (ttl != none ? min(ttl, maxAge) : maxAge) || storeIdentityChanged(dev, inode, size, mtime)`
-- `allowRecheck := (listChangedSeen && now - lastRecheck >= 1s) || (!listChangedSeen && now - lastRecheck >= minAge)`
+- `ageThreshold := ttl != none ? max(min(ttl, maxAge), minAge) : maxAge`; configuration requires `minAge <= maxAge`, unless both are 0 (AC-16b)
+- `eventStale := listChangedSeen || storeIdentityChanged(dev, inode, size, mtime)`
+- `stale := eventStale || age > ageThreshold`
+- `allowRecheck := (eventStale && now - lastRecheck >= 1s) || (!eventStale && now - lastRecheck >= minAge)`
+- Since `ageThreshold >= minAge`, an age-stale view is always allowed a re-check; only event staleness can be rate-limited, for at most one second.
 - `enforce` and `stale` and `!allowRecheck` → block (`pin.recheck_pending`, AC-17a).
 - Gateway-originated requests copy `_meta` `protocolVersion` and `clientCapabilities` from the triggering client request (AC-15a). They time out after `gateway_request_timeout` (10 s, AC-15b). A `tools/list` re-check stops at 100 pages or 16 MiB (AC-15c).
 
@@ -67,7 +70,7 @@ The same table applies to metadata, with "hidden" meaning "reduced" (AC-13). Dup
 | AC-9–AC-14 | Exhaustive table test of `Decide` (totality); `learn` never changes `rejected`; `findings_at_approval` matching; integration through `bulwark wrap` (filtering, pagination, `-32602`, reduced metadata with 128-character caps, stub analyzer) | `internal/registry/modes_test.go`, `internal/proxy/pin_test.go` |
 | AC-14a | Integration: approval written to the store → client receives `list_changed` (legacy) or a tagged notification on an open listen stream (2026-07-28); none without a stream | `internal/proxy/notify_test.go` |
 | AC-15–AC-15c | Integration: Bulwark's own discover first, carrying the client's `_meta`; discover error or timeout → reduced metadata; re-check error or timeout → call blocked; endless `nextCursor` → stops at 100 pages, call blocked | `internal/proxy/discover_test.go`, `internal/proxy/recheck_test.go` |
-| AC-16–AC-18 | Unit with an injected clock: `ttlMs` of `-1`, `0`, `1`, `1.5`, `1e300`, absent, and mixed across pages; every staleness trigger; notification re-check at 1 s; age re-check at `min_age`; stale while rate-limited → `pin.recheck_pending`; a fake upstream that changes a tool without notifying | `internal/registry/view_test.go`, `internal/proxy/recheck_test.go` |
+| AC-16–AC-18 | Unit with an injected clock: `ttlMs` of `-1`, `0`, `1`, `1.5`, `1e300`, absent, and mixed across pages; every staleness trigger; event re-check at 1 s; age re-check at `min_age`; **`ttlMs: 1000` with calls spread over 60 s → zero `pin.recheck_pending`**; a store change shortly after a re-check → at most a 1 s block; `min_age > max_age` rejected; stale while rate-limited inside the 1 s window → `pin.recheck_pending`; a fake upstream that changes a tool without notifying | `internal/registry/view_test.go`, `internal/proxy/recheck_test.go` |
 | AC-19, AC-20 | The suite (now-required cells, with the stated setups), plus the README table generated from `results.json` | `lab/suite` |
 | AC-21 | The spec 002 benchmark with pinning enabled | `internal/pipeline/bench_test.go` |
 | AC-22 | Diff of spec 001's AC-2 vocabulary and plan setup defaults, checked in review | spec 001 files |
