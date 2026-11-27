@@ -56,7 +56,8 @@ The same table applies to metadata, with "hidden" meaning "reduced" (AC-13). Dup
 - `ageThreshold := ttl != none ? max(min(ttl, maxAge), minAge) : maxAge`; configuration requires `minAge <= maxAge`, unless both are 0 (AC-16b)
 - `eventStale := listChangedSeen || storeIdentityChanged(dev, inode, size, mtime)`
 - `stale := eventStale || age > ageThreshold`
-- `allowRecheck := (eventStale && now - lastRecheck >= 1s) || (!eventStale && now - lastRecheck >= minAge)`
+- `ageStale := age > ageThreshold`
+- `allowRecheck := (eventStale && now - lastRecheck >= 1s) || (ageStale && now - lastRecheck >= minAge)`. This is an OR of the branches that apply, so a `min_age` below 1 s isn't overridden by the event rule.
 - Since `ageThreshold >= minAge`, an age-stale view is always allowed a re-check; only event staleness can be rate-limited, for at most one second.
 - `enforce` and `stale` and `!allowRecheck` → block (`pin.recheck_pending`, AC-17a).
 - Gateway-originated requests copy `_meta` `protocolVersion` and `clientCapabilities` from the triggering client request (AC-15a). They time out after `gateway_request_timeout` (10 s, AC-15b). A `tools/list` re-check stops at 100 pages or 16 MiB (AC-15c).
