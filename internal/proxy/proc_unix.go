@@ -15,7 +15,7 @@ import (
 func ownGroup(c *exec.Cmd) { c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
 
 func signalGroup(c *exec.Cmd, sig os.Signal) {
-	if c.Process != nil {
+	if c.Process != nil && syscall.Kill(-c.Process.Pid, 0) == nil { // skip an already empty group
 		syscall.Kill(-c.Process.Pid, sig.(syscall.Signal))
 	}
 }
@@ -24,7 +24,9 @@ var termSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 
 // ignoreSIGPIPE keeps a crashed client from killing the gateway on its next
 // write; the write error is handled as "client gone" instead.
-func ignoreSIGPIPE() { signal.Ignore(syscall.SIGPIPE) }
+// Notify (unlike Ignore) is not inherited across exec, so the child keeps the
+// default SIGPIPE disposition.
+func ignoreSIGPIPE() { signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE) }
 
 // exitCode maps a wait error to the child's exit code; a signal-killed child
 // gives 128 + signal, as shells report it.
