@@ -60,3 +60,24 @@ func TestChainAndTamper(t *testing.T) {
 		t.Error("args MAC must be stable and keyed")
 	}
 }
+
+// Two processes starting at once on a fresh install get the same key.
+func TestKeyRace(t *testing.T) {
+	dir := t.TempDir()
+	keys := make(chan []byte, 8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			k, err := loadKey(filepath.Join(dir, "audit.key"))
+			if err != nil {
+				t.Error(err)
+			}
+			keys <- k
+		}()
+	}
+	first := <-keys
+	for i := 1; i < 8; i++ {
+		if k := <-keys; !bytes.Equal(k, first) {
+			t.Fatal("processes saw different keys")
+		}
+	}
+}

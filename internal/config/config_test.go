@@ -38,6 +38,7 @@ secrets: {requests: audit}
 		"analyzer":      "version: 1\nanalyzers: {enabled: [magic]}\n",
 		"secret action": "version: 1\nsecrets: {results: deny}\n",
 		"duration":      "version: 1\npolicy: {eval_timeout: soon}\n",
+		"negative":      "version: 1\npolicy: {eval_timeout: -1s}\n",
 	} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%s: accepted", name)

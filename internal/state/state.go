@@ -23,6 +23,9 @@ func Prepare(dir, mode string) (warnings []string, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	if dir, err = filepath.EvalSymlinks(dir); err != nil { // inspect what the link points to
+		return nil, err
+	}
 	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -81,6 +84,9 @@ func ServerID(flag, mode, digest string) (string, error) {
 	}
 	if mode == "enforce" {
 		return "", fmt.Errorf("--server-id is required in enforce mode")
+	}
+	if len(digest) < len("sha256:")+12 {
+		return "", fmt.Errorf("invalid command digest")
 	}
 	return "auto-" + digest[len("sha256:"):len("sha256:")+12], nil
 }

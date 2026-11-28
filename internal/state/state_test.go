@@ -25,6 +25,16 @@ func TestState(t *testing.T) {
 		t.Error("enforce must refuse a world-writable file")
 	}
 
+	real := filepath.Join(t.TempDir(), "real")
+	os.MkdirAll(real, 0o700)
+	os.WriteFile(filepath.Join(real, "f"), nil, 0o600)
+	os.Chmod(filepath.Join(real, "f"), 0o666)
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(real, link)
+	if _, err := Prepare(link, "enforce"); err == nil {
+		t.Error("a symlinked state_dir must be inspected through the link")
+	}
+
 	a, err := CommandDigest([]string{"sh", "-c", "true"})
 	b, _ := CommandDigest([]string{"sh", "-c", "false"})
 	if err != nil || !strings.HasPrefix(a, "sha256:") || a == b {

@@ -60,6 +60,7 @@ type Writer struct {
 	now    func() time.Time
 	synced bool
 	timer  *time.Timer
+	err    error // first failed fsync; returned by the next Write and by Close
 }
 
 // Open creates <dir>/<UTC start>-<pid>.jsonl and loads (or creates, mode
@@ -80,24 +81,48 @@ func Open(dir, keyPath string, now func() time.Time) (*Writer, error) {
 	return &Writer{f: f, key: key, prev: Genesis, now: now, synced: true}, nil
 }
 
+// loadKey reads the per-install HMAC key, creating it on first use. The new
+// key is written to a temp file and linked into place, so two processes
+// starting at once never see a half-written key.
 func loadKey(path string) ([]byte, error) {
-	if b, err := os.ReadFile(path); err == nil {
-		if len(b) != 32 {
-			return nil, fmt.Errorf("audit key %s: want 32 bytes", path)
+	read := func() ([]byte, error) {
+		b, err := os.ReadFile(path)
+		if err == nil && len(b) != 32 {
+			err = fmt.Errorf("audit key %s: want 32 bytes", path)
 		}
-		return b, nil
+		if err == nil {
+			if fi, serr := os.Stat(path); serr == nil && fi.Mode().Perm() != 0o600 {
+				fmt.Fprintf(os.Stderr, "bulwark: warning: %s has mode %v, want 0600\n", path, fi.Mode().Perm())
+			}
+		}
+		return b, err
+	}
+	if b, err := read(); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return b, err
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".audit.key-*")
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	_, err = f.Write(key)
-	return key, err
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(key); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Link(tmp.Name(), path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return read() // another process won the race
+		}
+		return nil, err
+	}
+	return key, nil
 }
 
 // MAC returns the keyed argument digest stored instead of raw arguments.
@@ -112,8 +137,10 @@ func (w *Writer) MAC(args []byte) string {
 func (w *Writer) Write(r Record) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.seq++
-	r.V, r.Seq, r.PrevHash, r.Hash = 1, w.seq, w.prev, ""
+	if w.err != nil {
+		return w.err
+	}
+	r.V, r.Seq, r.PrevHash, r.Hash = 1, w.seq+1, w.prev, ""
 	r.TS = w.now().UTC().Format("2006-01-02T15:04:05.000Z")
 	body, err := json.Marshal(r)
 	if err != nil {
@@ -131,8 +158,8 @@ func (w *Writer) Write(r Record) error {
 	if _, err := w.f.Write(append(line, '\n')); err != nil {
 		return err
 	}
-	w.prev = h
-	if w.synced { // fsync within a second of the first unsynced record (AC-25)
+	w.prev, w.seq = h, w.seq+1 // only after a successful write, so a failure leaves no hole
+	if w.synced {              // fsync within a second of the first unsynced record (AC-25)
 		w.synced = false
 		w.timer = time.AfterFunc(time.Second, w.sync)
 	}
@@ -142,7 +169,9 @@ func (w *Writer) Write(r Record) error {
 func (w *Writer) sync() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.f.Sync()
+	if err := w.f.Sync(); err != nil && w.err == nil {
+		w.err = fmt.Errorf("audit fsync: %w", err)
+	}
 	w.synced = true
 }
 
@@ -153,11 +182,14 @@ func (w *Writer) Close() error {
 	if w.timer != nil {
 		w.timer.Stop()
 	}
-	if err := w.f.Sync(); err != nil {
-		w.f.Close()
-		return err
+	err := w.f.Sync()
+	if cerr := w.f.Close(); err == nil {
+		err = cerr
 	}
-	return w.f.Close()
+	if w.err != nil {
+		return w.err
+	}
+	return err
 }
 
 // hashOf hashes prev_hash ‖ canonical form of the record bytes without "hash".

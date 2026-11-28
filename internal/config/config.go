@@ -107,7 +107,10 @@ func Parse(b []byte) (*Config, error) {
 		return nil, fmt.Errorf("config: version must be 1, got %d", c.Version)
 	}
 	c.applyDefaults()
-	return &c, c.validate()
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func (c *Config) applyDefaults() {
@@ -184,7 +187,17 @@ func (c *Config) validate() error {
 	}
 	for name, v := range map[string]int{"max_message_bytes": c.Limits.MaxMessageBytes, "max_depth": c.Limits.MaxDepth, "max_outstanding_requests": c.Limits.MaxOutstandingRequests, "notifications_per_second": c.Limits.NotificationsPerSecond} {
 		if v < 0 {
-			bad("limits.%s must be positive", name)
+			bad("limits.%s must not be negative (0 means the default)", name)
+		}
+	}
+	durations := map[string]time.Duration{"policy.eval_timeout": c.Policy.EvalTimeout.Duration, "limits.gateway_request_timeout": c.Limits.GatewayRequestTimeout.Duration}
+	for id, s := range c.Servers {
+		durations["servers."+id+".pin_recheck_max_age"] = s.PinRecheckMaxAge.Duration
+		durations["servers."+id+".pin_recheck_min_age"] = s.PinRecheckMinAge.Duration
+	}
+	for name, d := range durations {
+		if d < 0 {
+			bad("%s must not be negative", name)
 		}
 	}
 	return errors.Join(errs...)

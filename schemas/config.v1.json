@@ -27,8 +27,8 @@
       "requests": {"enum": ["deny", "redact", "audit"]}, "results": {"enum": ["redact", "audit"]}}},
     "mrtr": {"type": "object", "additionalProperties": false, "properties": {"mode": {"enum": ["enforce", "audit"]}}},
     "limits": {"type": "object", "additionalProperties": false, "properties": {
-      "max_message_bytes": {"type": "integer", "minimum": 1}, "max_depth": {"type": "integer", "minimum": 1},
-      "max_outstanding_requests": {"type": "integer", "minimum": 1}, "notifications_per_second": {"type": "integer", "minimum": 1},
+      "max_message_bytes": {"type": "integer", "minimum": 0}, "max_depth": {"type": "integer", "minimum": 0},
+      "max_outstanding_requests": {"type": "integer", "minimum": 0}, "notifications_per_second": {"type": "integer", "minimum": 0},
       "gateway_request_timeout": {"type": "string"}}}
   }
 }
