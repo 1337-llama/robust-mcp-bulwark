@@ -3,6 +3,9 @@ package jsonrpc
 import (
 	"bufio"
 	"errors"
+	"fmt"
+	"math/rand/v2"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -25,12 +28,18 @@ func TestJSONTextDefaults(t *testing.T) {
 			t.Errorf("jsontext accepted %q with default options", bad)
 		}
 	}
+	for _, lit := range []string{"12345678901234567890123", "1.50e+10", "-0", "1e400"} {
+		tok, err := jsontext.NewDecoder(strings.NewReader(lit)).ReadToken()
+		if err != nil || tok.String() != lit {
+			t.Errorf("number literal %s came back as %q (%v)", lit, tok.String(), err)
+		}
+	}
 }
 
 // Verifies: NFR-013 (AC-10: byte cap, discard to newline, next line still read)
 func TestReadLine(t *testing.T) {
-	r := bufio.NewReaderSize(strings.NewReader("abcd\nabcde\nxy\r\nlast"), 16)
-	for _, want := range []string{"abcd", "!", "xy", "last"} {
+	r := bufio.NewReaderSize(strings.NewReader("abcd\nabcde\nxy\r\nwxyz\r\nlast\nabcde"), 16)
+	for _, want := range []string{"abcd", "!", "xy", "wxyz", "last", "!"} {
 		got, err := ReadLine(r, 4)
 		if want == "!" {
 			if err != ErrTooLong {
@@ -72,7 +81,9 @@ func TestParse(t *testing.T) {
 		{`{"jsonrpc":"1.0","method":"x"}`, CodeInvalid, 0},
 		{`{"jsonrpc":"2.0","id":{},"method":"x"}`, CodeInvalid, 0},
 		{`{"jsonrpc":"2.0","id":1,"result":1,"error":{}}`, CodeInvalid, 0},
-		{`{"jsonrpc":"2.0","method":"x","params":[[[[1]]]]}`, CodeInvalid, 0}, // depth 5 > 4
+		{`{"jsonrpc":"2.0","method":"x","params":[[[[1]]]]}`, CodeLimit, 0}, // depth 5 > 4: AC-10
+		{`{"jsonrpc":"2.0","id":null,"method":"x"}`, CodeInvalid, 0},
+		{`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"x"}}`, 0, Response},
 	}
 	for _, c := range cases {
 		m, err := Parse([]byte(c.in), 4)
@@ -96,6 +107,7 @@ func TestRouteScan(t *testing.T) {
 		{`{"id":{"a":1},"method":"x"}`, Request, ""},
 		{`{"id":5,"method":"x","params":{"a":`, Request, "5"},
 		{`[1]`, Invalid, ""},
+		{"{\"id\":\"a\xffb\",\"method\":\"x\"}", Request, ""},
 	}
 	for _, c := range cases {
 		kind, id := RouteScan([]byte(c.in))
@@ -121,7 +133,7 @@ func TestRoundTrip(t *testing.T) {
 		}
 		out := Serialize(m.Root)
 		m2, err := Parse(out, 64)
-		if err != nil || string(Serialize(m2.Root)) != string(out) {
+		if err != nil || !reflect.DeepEqual(m.Root, m2.Root) {
 			t.Fatalf("round trip: %s -> %s (%v)", in, out, err)
 		}
 		for _, lit := range []string{"12345678901234567890123", "1.50e+10", "-0", `"z"`} {
@@ -147,8 +159,41 @@ func FuzzParseSerialize(f *testing.F) {
 		}
 		out := Serialize(m.Root)
 		m2, err := Parse(out, 64)
-		if err != nil || string(Serialize(m2.Root)) != string(out) {
+		if err != nil || !reflect.DeepEqual(m.Root, m2.Root) {
 			t.Fatalf("accepted input did not round-trip: %q -> %q", s, out)
 		}
 	})
+}
+
+// gen builds a random JSON value text: big integers, exponent literals,
+// unicode strings, nesting, and arbitrary (unknown) member names.
+func gen(r *rand.Rand, depth int) string {
+	switch k := r.IntN(7); {
+	case depth > 3 || k == 0:
+		return []string{"12345678901234567890123", "1.50e+10", "-0", "0.1", "-7e-3", "42"}[r.IntN(6)]
+	case k == 1:
+		return []string{`"x"`, `"\u00e9\u2028<&>"`, `"\ud83d\ude00"`, `""`}[r.IntN(4)]
+	case k == 2:
+		return []string{"true", "false", "null"}[r.IntN(3)]
+	case k == 3:
+		return "[" + gen(r, depth+1) + "," + gen(r, depth+1) + "]"
+	default:
+		return fmt.Sprintf(`{"u%d":%s,"a":%s}`, r.IntN(100), gen(r, depth+1), gen(r, depth+1))
+	}
+}
+
+// Verifies: FR-028 (AC-9 property test over generated messages)
+func TestRoundTripProperty(t *testing.T) {
+	r := rand.New(rand.NewPCG(1, 2))
+	for i := 0; i < 2000; i++ {
+		in := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"m","params":%s,"x-unknown":%s}`, i, gen(r, 0), gen(r, 0))
+		m, err := Parse([]byte(in), 64)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		m2, err := Parse(Serialize(m.Root), 64)
+		if err != nil || !reflect.DeepEqual(m.Root, m2.Root) {
+			t.Fatalf("not identical after round trip: %s", in)
+		}
+	}
 }

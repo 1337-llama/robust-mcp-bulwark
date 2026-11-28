@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/go-json-experiment/json/jsontext"
 )
@@ -88,13 +89,19 @@ const (
 // line has been discarded, so the next call reads the next line (AC-10).
 var ErrTooLong = &Error{CodeLimit, "message exceeds the size limit"}
 
-// ReadLine returns the next line without its newline, never buffering more
-// than max+1 bytes of it.
+var errDepth = errors.New("nesting too deep")
+
+// ReadLine returns the next line without its "\n" or "\r\n". The content
+// (excluding the line ending) may be at most max bytes; a longer line is
+// discarded up to its newline and ErrTooLong is returned, so the next call reads
+// the next line (AC-10). It buffers at most max+2 bytes of a line, plus one
+// bufio chunk while discarding.
 func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
 	var line []byte
 	for {
 		chunk, err := r.ReadSlice('\n')
-		if len(line)+len(chunk) > max+1 { // +1 for the newline
+		line = append(line, chunk...)
+		if len(line) > max+2 { // longer than content + "\r\n" can be
 			for errors.Is(err, bufio.ErrBufferFull) {
 				_, err = r.ReadSlice('\n')
 			}
@@ -103,14 +110,17 @@ func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
 			}
 			return nil, ErrTooLong
 		}
-		line = append(line, chunk...)
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
 		if err != nil && (err != io.EOF || len(line) == 0) {
 			return nil, err
 		}
-		return bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r")), nil
+		line = bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))
+		if len(line) > max {
+			return nil, ErrTooLong
+		}
+		return line, nil
 	}
 }
 
@@ -130,6 +140,9 @@ func Parse(line []byte, maxDepth int) (*Message, error) {
 			err = errors.New("trailing data")
 		}
 	}
+	if errors.Is(err, errDepth) {
+		return nil, &Error{CodeLimit, "message exceeds the depth limit"} // AC-10: -32010, limit_exceeded
+	}
 	if err != nil {
 		return nil, &Error{CodeInvalid, "invalid request: " + err.Error()}
 	}
@@ -148,7 +161,7 @@ func parseValue(d *jsontext.Decoder, depth, maxDepth int) (*Value, error) {
 	switch t.Kind() {
 	case '{', '[':
 		if depth+1 > maxDepth {
-			return nil, fmt.Errorf("nesting deeper than %d", maxDepth)
+			return nil, fmt.Errorf("%w: more than %d levels", errDepth, maxDepth)
 		}
 		v := &Value{Kind: Object}
 		if t.Kind() == '[' {
@@ -198,8 +211,8 @@ func classify(root *Value) (*Message, error) {
 		return nil, errors.New(`"jsonrpc" must be "2.0"`)
 	}
 	m := &Message{Root: root, ID: root.Get("id")}
-	if m.ID != nil && m.ID.Kind != String && m.ID.Kind != Number && m.ID.Kind != Null {
-		return nil, errors.New("id must be a string or a number")
+	if m.ID != nil && m.ID.Kind != String && m.ID.Kind != Number && !(m.ID.Kind == Null && root.Get("method") == nil) {
+		return nil, errors.New("id must be a string or a number (null only in error responses)")
 	}
 	method := root.Get("method")
 	switch {
@@ -290,11 +303,14 @@ func RouteScan(line []byte) (Kind, *Value) {
 			if k := d.PeekKind(); k != '"' && k != '0' {
 				break // non-scalar or unreadable id: skipped below
 			}
-			if t, err := d.ReadToken(); err == nil {
-				id = &Value{Kind: String, Str: t.String()}
-				if t.Kind() == '0' {
-					id = &Value{Kind: Number, Num: t.String()}
-				}
+			raw, err := d.ReadValue()
+			var str string
+			switch {
+			case err != nil || !utf8.Valid(raw): // never echo an id that was altered by decoding
+			case raw[0] == '"' && stdjson.Unmarshal(raw, &str) == nil:
+				id = &Value{Kind: String, Str: str}
+			case raw[0] != '"':
+				id = &Value{Kind: Number, Num: string(raw)}
 			}
 			continue
 		case "method":
