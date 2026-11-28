@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
-| Version | 0.11.11 |
+| Version | 0.11.12 |
 | Last updated | 2026-11-27 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
@@ -33,6 +33,7 @@
 | 0.11.9 | 2026-11-27 | Spec 006: derived values are lists of objects with `null` for unparseable or absent values; no IDNA; policies type-checked against the input schema; a policy load error stops `wrap` in every mode; `-32011` for blocked MRTR retries on prompts and resources (§5.6, §6.6; decisions 40–42) |
 | 0.11.10 | 2026-11-27 | Spec 007: secret rules copied from gitleaks at a pinned commit (§5.5); canary format fixed to the real AWS key alphabet (§6.7) |
 | 0.11.11 | 2026-11-27 | Corpora are downloaded and hash-checked in CI, never committed (§5.4; decision 43, maintainer) |
+| 0.11.12 | 2026-11-28 | Spec 002 built: config validated by the typed strict loader (the published JSON Schema is for editors, kept in sync by a test); the NFR-004 gate is an in-process test instead of a separate `benchgate` tool (decision 44) |
 
 > **How to use this document:** follow [docs/WORKFLOW.md](docs/WORKFLOW.md) Stage 1. Each section lists **Questions to resolve**. Work through them with Claude one section at a time, replace the seeded material with agreed content, and log decisions in §14.
 
@@ -702,7 +703,7 @@ Adoption is a one-line change in the client's server entry (G1):
 ```
 
 ### 6.3 Configuration file (`version: 1`)
-YAML, validated against an embedded JSON Schema. Unknown keys are errors. An invalid config in `enforce` mode stops `wrap` from starting (fail closed).
+YAML, validated by a strict typed loader; the JSON Schema `schemas/config.v1.json` is published for editors (decision 44). Unknown keys are errors. An invalid config in `enforce` mode stops `wrap` from starting (fail closed).
 ```yaml
 version: 1
 servers:                       # keyed by --server-id
@@ -1128,6 +1129,7 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 41 | No IDNA conversion: a non-ASCII host is `null` (denied by allowlists); allowlists use punycode | The standard library has no IDNA; a dependency for it adds parsing ambiguity at a trust boundary, and denying is the safe default | — | 2026-11-27 |
 | 42 | Policies are type-checked against `schemas/policy-input.v1.json` at load; any load error stops `wrap` in every mode | A misspelled field otherwise makes a `deny` rule silently never fire; a broken policy would make `warn` results misleading too | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 | 43 | No third-party corpus text in the repository: CI downloads the pinned MCPTox files, verifies SHA-256, and converts them into a git-ignored cache | Maintainer decision; avoids redistributing third-party text. Results stay reproducible through pinned commits and hashes | — | 2026-11-27 |
+| 44 | Config validation lives in the typed strict loader, with `schemas/config.v1.json` published for editors and checked against the loader by a test; the p95 < 5 ms gate is an in-process Go test (`TestLatencyGate`) rather than a separate `tools/benchgate` binary | Same guarantees with one less dependency (no runtime JSON Schema library) and one less tool; measured p95 is about 36 µs | — | 2026-11-28 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:
