@@ -124,7 +124,7 @@ func TestRouteScan(t *testing.T) {
 // Verifies: FR-028 (AC-2, AC-8, AC-9 round trip, exact literals, order, unknown fields)
 func TestRoundTrip(t *testing.T) {
 	for _, in := range []string{
-		`{"jsonrpc":"2.0","id":12345678901234567890123,"method":"m","params":{"z":1.50e+10,"a":-0,"u":{"x":[true,false,null]},"s":"<&> é"}}`,
+		`{"jsonrpc":"2.0","id":12345678901234567890123,"method":"m","params":{"z":1.50e+10,"a":-0,"u":{"x":[true,false,null]},"s":"<&>\u2028é"}}`,
 		`{"jsonrpc":"2.0","result":{"b":2,"a":1},"id":"x"}`,
 	} {
 		m, err := Parse([]byte(in), 64)

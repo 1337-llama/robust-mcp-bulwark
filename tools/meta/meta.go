@@ -4,18 +4,22 @@
 //	meta coverage every requirement traced by a Done spec is named by a test
 //	meta pending  no manifest still waits on a Done spec
 //	meta trace F  the strace output F has no AF_INET/AF_INET6 socket (AC-21)
+//	meta hidden   no tracked text file contains a Cc/Cf/Zl/Zp character (spec 002 AC-34)
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -37,7 +41,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: meta labels|coverage|pending | meta trace FILE")
 		os.Exit(2)
 	}
-	checks := map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending}
+	checks := map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending, "hidden": hidden}
 	check, ok := checks[os.Args[1]]
 	if !ok {
 		fmt.Fprintln(os.Stderr, "meta: unknown check", os.Args[1])
@@ -228,4 +232,34 @@ func inetSockets(trace string) []string {
 		}
 	}
 	return bad
+}
+
+// hidden lists tracked text files containing invisible or control characters
+// (tab, newline and carriage return are allowed). Binary files are skipped.
+func hidden(root string) []string {
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		return []string{"git ls-files: " + err.Error()}
+	}
+	var bad []string
+	for _, name := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+		b, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil || bytes.IndexByte(b, 0) >= 0 {
+			continue // binary (contains NUL); invalid UTF-8 elsewhere is still scanned
+		}
+		if n := hiddenRunes(string(b)); n > 0 {
+			bad = append(bad, fmt.Sprintf("%s: %d hidden or control characters", name, n))
+		}
+	}
+	return bad
+}
+
+func hiddenRunes(s string) int {
+	n := 0
+	for _, r := range s {
+		if r != '\t' && r != '\n' && r != '\r' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+			n++
+		}
+	}
+	return n
 }

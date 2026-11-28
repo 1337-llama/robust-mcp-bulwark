@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,7 +77,7 @@ func TestCoverageAndPending(t *testing.T) {
 }
 
 func TestRepoPasses(t *testing.T) {
-	for name, check := range map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending} {
+	for name, check := range map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending, "hidden": hidden} {
 		if got := check("../.."); len(got) > 0 {
 			t.Errorf("%s on this repo: %v", name, got)
 		}
@@ -101,5 +102,34 @@ func TestInetSockets(t *testing.T) {
 	}
 	if inetSockets("1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") == nil {
 		t.Error("a trace without the lab execve must fail")
+	}
+}
+
+// Verifies: FR-029 (spec 002 AC-34 hidden-character check)
+func TestHiddenRunes(t *testing.T) {
+	for in, want := range map[string]int{"plain\ttext\r\n": 0, "rlo\u202e": 1, "zwsp\u200b": 1, "tag\U000E0041": 1, "esc\x1b[": 1} {
+		if got := hiddenRunes(in); got != want {
+			t.Errorf("%q: %d, want %d", in, got, want)
+		}
+	}
+}
+
+// Verifies: FR-029 (T28 fixtures through hidden(): RLO, ZWSP, Tag, invalid UTF-8 plus RLO, plain)
+func TestHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"rlo.md": "a\u202eb", "zwsp.go": "x\u200by", "tag.txt": "\U000E0041", "mixed.txt": "\xff \u202e", "plain.md": "fine\n", "bin.dat": "\x00\u202e"})
+	for _, c := range [][]string{{"init", "-q"}, {"add", "."}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, c...)...).CombinedOutput(); err != nil {
+			t.Fatal(string(out))
+		}
+	}
+	got := strings.Join(hidden(root), "\n")
+	for _, f := range []string{"rlo.md", "zwsp.go", "tag.txt", "mixed.txt"} {
+		if !strings.Contains(got, f) {
+			t.Errorf("%s not flagged:\n%s", f, got)
+		}
+	}
+	if strings.Contains(got, "plain.md") || strings.Contains(got, "bin.dat") {
+		t.Errorf("false positive:\n%s", got)
 	}
 }
