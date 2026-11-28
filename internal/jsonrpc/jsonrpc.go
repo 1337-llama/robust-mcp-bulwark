@@ -124,6 +124,19 @@ func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
 	}
 }
 
+// ParseValue strictly parses any single JSON value (used for audit records).
+func ParseValue(b []byte, maxDepth int) (*Value, error) {
+	d := jsontext.NewDecoder(bytes.NewReader(b))
+	v, err := parseValue(d, 0, maxDepth)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.ReadToken(); err != io.EOF {
+		return nil, errors.New("trailing data")
+	}
+	return v, nil
+}
+
 // Parse strictly parses one JSON-RPC 2.0 message. Syntax errors give
 // CodeParse; valid JSON that is rejected (duplicate names, invalid UTF-8, lone
 // surrogates, too deep, not a single JSON-RPC 2.0 object) gives CodeInvalid.
