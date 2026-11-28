@@ -31,8 +31,8 @@ func (r Revision) Handle(_ context.Context, m *jsonrpc.Message, _ Direction, s *
 		unknown = unknown || n == "revision.unknown"
 	}
 	if unknown && s.Mode == "enforce" && m.Kind == jsonrpc.Request {
-		reply, _ := jsonrpc.Parse(jsonrpc.UnsupportedVersion(m.ID, mcprev.Supported), 8)
-		return Block, reply, findings, nil, nil
+		reply, err := jsonrpc.Parse(jsonrpc.UnsupportedVersion(m.ID, mcprev.Supported), 8)
+		return Block, reply, findings, nil, err
 	}
 	return Forward, m, findings, nil, nil
 }
@@ -60,6 +60,9 @@ func (*RateLimit) Match(m *jsonrpc.Message, d Direction, _ *Session) bool {
 }
 
 func (r *RateLimit) Handle(_ context.Context, m *jsonrpc.Message, _ Direction, _ *Session) (Verdict, *jsonrpc.Message, []Finding, []string, error) {
+	if m.Method == "notifications/tools/list_changed" && r.OnListChanged != nil {
+		r.OnListChanged() // outside the lock, so a re-entrant callback can't deadlock
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.Now()
@@ -69,9 +72,6 @@ func (r *RateLimit) Handle(_ context.Context, m *jsonrpc.Message, _ Direction, _
 		r.window, r.count = now, 0
 	}
 	if m.Method == "notifications/tools/list_changed" {
-		if r.OnListChanged != nil {
-			r.OnListChanged()
-		}
 		if now.Sub(r.lastListFwd) < time.Second {
 			return Block, nil, findings, nil, nil // coalesced, already processed
 		}

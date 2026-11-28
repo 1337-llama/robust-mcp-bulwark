@@ -62,9 +62,6 @@ type Chain []Interceptor
 func (c Chain) Run(ctx context.Context, m *jsonrpc.Message, d Direction, s *Session) (res Result) {
 	res.Msg = m
 	for _, ic := range c {
-		if !ic.Match(res.Msg, d, s) {
-			continue
-		}
 		v, out, f, controls, err := safeHandle(ctx, ic, res.Msg, d, s)
 		res.Findings = append(res.Findings, f...)
 		res.Controls = append(res.Controls, controls...)
@@ -73,10 +70,18 @@ func (c Chain) Run(ctx context.Context, m *jsonrpc.Message, d Direction, s *Sess
 			return res
 		}
 		switch v {
+		case Forward:
 		case Modify:
+			if out == nil {
+				res.Verdict, res.Msg, res.Err = Block, nil, fmt.Errorf("%s: Modify without a message", ic.Name())
+				return res
+			}
 			res.Verdict, res.Msg = Modify, out
 		case Block:
 			res.Verdict, res.Msg = Block, out
+			return res
+		default: // fail closed on anything unexpected
+			res.Verdict, res.Msg, res.Err = Block, nil, fmt.Errorf("%s: unknown verdict %d", ic.Name(), v)
 			return res
 		}
 	}
@@ -89,5 +94,8 @@ func safeHandle(ctx context.Context, ic Interceptor, m *jsonrpc.Message, d Direc
 			v, out, err = Block, nil, fmt.Errorf("panic: %v", r)
 		}
 	}()
+	if !ic.Match(m, d, s) { // Match runs under the same recover (AC-26)
+		return Forward, m, nil, nil, nil
+	}
 	return ic.Handle(ctx, m, d, s)
 }

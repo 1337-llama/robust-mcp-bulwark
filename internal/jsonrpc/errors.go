@@ -9,7 +9,6 @@ const (
 	CodeMethodNotFound     = -32601
 	CodeInternal           = -32603
 	CodeUnsupportedVersion = -32022
-	CodeBlocked            = -32011
 )
 
 // ErrorResponse builds a JSON-RPC error response. A nil id becomes "id": null
@@ -38,23 +37,4 @@ func UnsupportedVersion(id *Value, supported []string) []byte {
 	}
 	return ErrorResponse(id, CodeUnsupportedVersion, "Unsupported protocol version",
 		&Value{Kind: Object, Members: []Member{{"supported", list}}})
-}
-
-// BlockedToolResult is the tools/call result a policy, secret or MRTR block
-// returns (isError, so clients show it to the model). modern adds the
-// 2026-07-28 resultType.
-func BlockedToolResult(id *Value, text string, modern bool) []byte {
-	result := &Value{Kind: Object, Members: []Member{
-		{"content", &Value{Kind: Array, Elems: []*Value{{Kind: Object, Members: []Member{
-			{"type", &Value{Kind: String, Str: "text"}},
-			{"text", &Value{Kind: String, Str: text}},
-		}}}}},
-		{"isError", &Value{Kind: Bool, Bool: true}},
-	}}
-	if modern {
-		result.Members = append(result.Members, Member{"resultType", &Value{Kind: String, Str: "complete"}})
-	}
-	return Serialize(&Value{Kind: Object, Members: []Member{
-		{"jsonrpc", &Value{Kind: String, Str: "2.0"}}, {"id", id}, {"result", result},
-	}})
 }

@@ -3,7 +3,11 @@
 // Revisions: 2026-07-28 (per-request _meta, no initialize) and 2025-11-25.
 package mcprev
 
-import "github.com/1337-llama/robust-mcp-bulwark/internal/jsonrpc"
+import (
+	"sync"
+
+	"github.com/1337-llama/robust-mcp-bulwark/internal/jsonrpc"
+)
 
 const (
 	Rev2026 = "2026-07-28"
@@ -18,8 +22,15 @@ var Supported = []string{Rev2026, Rev2025}
 
 func IsSupported(rev string) bool { return rev == Rev2026 || rev == Rev2025 }
 
-// Conn tracks one client connection's negotiation state.
+// maxPending bounds the requests whose responses can still change the
+// negotiation state; older entries are forgotten (an unanswered flood can't
+// grow memory). The proxy's outstanding table (AC-14) bounds the rest.
+const maxPending = 256
+
+// Conn tracks one client connection's negotiation state. It is safe for
+// concurrent use: Request runs on the client-to-server path, Response on the other.
 type Conn struct {
+	mu         sync.Mutex
 	negotiated string            // version from a successful initialize result (legacy)
 	modernOK   bool              // a modern request has succeeded
 	pending    map[string]string // request id -> "initialize" | "modern" | "discover"
@@ -28,6 +39,8 @@ type Conn struct {
 // Request assigns a revision to a client request or notification. Findings
 // are "revision.unknown" or "revision.mixed".
 func (c *Conn) Request(m *jsonrpc.Message) (rev string, findings []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	params := m.Root.Get("params")
 	if v := params.Get("_meta").Get(MetaVersion); v != nil && v.Kind == jsonrpc.String {
 		rev = v.Str
@@ -59,7 +72,7 @@ func (c *Conn) track(m *jsonrpc.Message, what string) {
 	if m.Kind != jsonrpc.Request {
 		return
 	}
-	if c.pending == nil {
+	if c.pending == nil || len(c.pending) >= maxPending {
 		c.pending = map[string]string{}
 	}
 	c.pending[string(jsonrpc.Serialize(m.ID))] = what
@@ -69,6 +82,8 @@ func (c *Conn) track(m *jsonrpc.Message, what string) {
 // request. A failed server/discover probe followed by initialize is the
 // 2026-07-28 stdio backward-compatibility pattern, so it never counts as modern.
 func (c *Conn) Response(m *jsonrpc.Message) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	key := string(jsonrpc.Serialize(m.ID))
 	what, ok := c.pending[key]
 	if !ok {

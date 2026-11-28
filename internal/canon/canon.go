@@ -22,11 +22,20 @@ func Bytes(v *jsonrpc.Value) []byte {
 func write(b *bytes.Buffer, v *jsonrpc.Value) {
 	switch v.Kind {
 	case jsonrpc.Object:
-		ms := slices.Clone(v.Members)
-		// RFC 8785 §3.2.3: sort member names by their UTF-16 code units.
-		slices.SortFunc(ms, func(x, y jsonrpc.Member) int {
-			return slices.Compare(utf16.Encode([]rune(x.Name)), utf16.Encode([]rune(y.Name)))
-		})
+		// RFC 8785 §3.2.3: sort member names by their UTF-16 code units (encoded once each).
+		type keyed struct {
+			key []uint16
+			m   jsonrpc.Member
+		}
+		ks := make([]keyed, len(v.Members))
+		for i, m := range v.Members {
+			ks[i] = keyed{utf16.Encode([]rune(m.Name)), m}
+		}
+		slices.SortFunc(ks, func(x, y keyed) int { return slices.Compare(x.key, y.key) })
+		ms := make([]jsonrpc.Member, len(ks))
+		for i, k := range ks {
+			ms[i] = k.m
+		}
 		b.WriteByte('{')
 		for i, m := range ms {
 			if i > 0 {

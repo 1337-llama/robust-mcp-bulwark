@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,5 +111,25 @@ func TestHiddenRunes(t *testing.T) {
 		if got := hiddenRunes(in); got != want {
 			t.Errorf("%q: %d, want %d", in, got, want)
 		}
+	}
+}
+
+// Verifies: FR-029 (T28 fixtures through hidden(): RLO, ZWSP, Tag, invalid UTF-8 plus RLO, plain)
+func TestHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"rlo.md": "a\u202eb", "zwsp.go": "x\u200by", "tag.txt": "\U000E0041", "mixed.txt": "\xff \u202e", "plain.md": "fine\n", "bin.dat": "\x00\u202e"})
+	for _, c := range [][]string{{"init", "-q"}, {"add", "."}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, c...)...).CombinedOutput(); err != nil {
+			t.Fatal(string(out))
+		}
+	}
+	got := strings.Join(hidden(root), "\n")
+	for _, f := range []string{"rlo.md", "zwsp.go", "tag.txt", "mixed.txt"} {
+		if !strings.Contains(got, f) {
+			t.Errorf("%s not flagged:\n%s", f, got)
+		}
+	}
+	if strings.Contains(got, "plain.md") || strings.Contains(got, "bin.dat") {
+		t.Errorf("false positive:\n%s", got)
 	}
 }

@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -245,8 +244,8 @@ func hidden(root string) []string {
 	var bad []string
 	for _, name := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
 		b, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil || bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
-			continue // binary
+		if err != nil || bytes.IndexByte(b, 0) >= 0 {
+			continue // binary (contains NUL); invalid UTF-8 elsewhere is still scanned
 		}
 		if n := hiddenRunes(string(b)); n > 0 {
 			bad = append(bad, fmt.Sprintf("%s: %d hidden or control characters", name, n))
