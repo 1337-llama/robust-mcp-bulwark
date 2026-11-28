@@ -58,7 +58,7 @@ Then change your MCP client's server command so it runs through Bulwark:
 {"command": "bulwark", "args": ["wrap", "--server-id", "fs", "--mode", "warn", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem@<exact-version>", "/workspace"]}
 ```
 
-`warn` (the default) records everything and blocks nothing. Check the audit log:
+`warn` (the default) records everything and blocks no tool calls yet; strict parsing and the size, depth and notification-rate limits apply in every mode. Check the audit log:
 
 ```bash
 bulwark audit tail --server-id fs

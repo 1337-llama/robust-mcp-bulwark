@@ -32,7 +32,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Terminal safety, configuration, state**
 - [x] **T21:** `internal/termsafe`: property test over every code point in Cc, Cf, Zl, and Zp, plus golden strings (the L-06 Tag payload, CSI, OSC 8, RLO), then the filter. (AC-27)
-- [x] **T22:** `internal/config`: strict version-1 YAML, defaults, embedded schema `schemas/config.v1.json`, invalid-config behavior per mode. Tests first. (AC-28)
+- [x] **T22:** `internal/config`: strict version-1 YAML, defaults, typed validation with `schemas/config.v1.json` published for editors (decision 44), invalid-config behavior per mode (in `cmd/bulwark`). Tests first. (AC-28)
 - [x] **T23:** `internal/state`: `state_dir` creation and modes, permission warnings and the refusal in `enforce`, `command_digest`, default `server_id`. Tests first. (AC-29, AC-30)
 
 **CLI**
@@ -40,7 +40,7 @@ Each task takes under about an hour and can be verified on its own. The test is 
 
 **Suite, performance, CI**
 - [x] **T25:** `lab/suite/transparency_test.go`: every scenario and revision, `none` vs. `learn` through `bulwark wrap`, comparing observation logs and parsed received messages. (AC-6)
-- [x] **T26:** Record transcripts into `internal/pipeline/testdata/transcripts/`; the benchmark; `tools/benchgate` (p95 from samples); the gate in `ci.yml`. (AC-31)
+- [x] **T26:** A generated message mix in `internal/pipeline/testdata/transcript.jsonl`; the benchmark; the p95 gate as `TestLatencyGate`, including the audit write (decision 44). (AC-31)
 - [x] **T27:** Extend the `tools/meta` import check to `cmd/` and `internal/`; confirm that the `bulwark` process appears in the spec 001 trace and creates no `AF_INET`/`AF_INET6` sockets. (AC-32)
 - [x] **T28:** `tools/meta hidden`: fixtures first (RLO, ZWSP, Tag character, a plain file), then the check over all tracked text files; add it to the `meta` job. (AC-34)
 - [x] **T29:** Fuzz job in `ci.yml` (60 s per target on PRs; nightly 10 min in `nightly.yml`). (AC-9)

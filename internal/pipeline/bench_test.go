@@ -4,14 +4,19 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/1337-llama/robust-mcp-bulwark/internal/audit"
 	"github.com/1337-llama/robust-mcp-bulwark/internal/jsonrpc"
 	"github.com/1337-llama/robust-mcp-bulwark/internal/mcprev"
 )
 
+// corpus reads testdata/transcript.jsonl: a generated, representative message
+// mix (discover, a 40-tool listing, tools/call requests and results, MRTR,
+// notifications), not a recording of the lab suite (decision 44).
 func corpus(t testing.TB) [][]byte {
 	f, err := os.Open("testdata/transcript.jsonl")
 	if err != nil {
@@ -27,8 +32,9 @@ func corpus(t testing.TB) [][]byte {
 	return lines
 }
 
-// process is the per-message gateway work: strict parse, the chain, re-serialize.
-func process(chain Chain, line []byte, s *Session) {
+// process is the per-message gateway work (AC-31): strict parse, the chain,
+// re-serialize, and one audit record written to a temporary file.
+func process(chain Chain, w *audit.Writer, line []byte, s *Session) {
 	m, err := jsonrpc.Parse(line, 64)
 	if err != nil {
 		return
@@ -41,6 +47,17 @@ func process(chain Chain, line []byte, s *Session) {
 	if res.Msg != nil {
 		jsonrpc.Serialize(res.Msg.Root)
 	}
+	w.Write(audit.Record{Event: "call_decision", Method: m.Method, Controls: res.Controls})
+}
+
+func writer(t testing.TB) *audit.Writer {
+	dir := t.TempDir()
+	w, err := audit.Open(filepath.Join(dir, "audit"), filepath.Join(dir, "audit.key"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+	return w
 }
 
 func newChain() Chain {
@@ -48,21 +65,21 @@ func newChain() Chain {
 }
 
 func BenchmarkPipeline(b *testing.B) {
-	lines, chain, s := corpus(b), newChain(), &Session{Mode: "enforce"}
+	lines, chain, s, w := corpus(b), newChain(), &Session{Mode: "enforce"}, writer(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		process(chain, lines[i%len(lines)], s)
+		process(chain, w, lines[i%len(lines)], s)
 	}
 }
 
 // Verifies: NFR-004 (spec 002 AC-31: p95 per message < 5 ms, in process, upstream excluded)
 func TestLatencyGate(t *testing.T) {
-	lines, chain, s := corpus(t), newChain(), &Session{Mode: "enforce"}
+	lines, chain, s, w := corpus(t), newChain(), &Session{Mode: "enforce"}, writer(t)
 	var samples []time.Duration
 	for round := 0; round < 50; round++ {
 		for _, l := range lines {
 			t0 := time.Now()
-			process(chain, l, s)
+			process(chain, w, l, s)
 			samples = append(samples, time.Since(t0))
 		}
 	}

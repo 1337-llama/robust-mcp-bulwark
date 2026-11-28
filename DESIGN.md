@@ -5,7 +5,7 @@
 |---|---|
 | Status | **Approved on merge of design 03.** Design review 1 passed: [docs/reviews/design-review-1.md](docs/reviews/design-review-1.md). §8 is a v0.3 placeholder by design |
 | Version | 0.11.12 |
-| Last updated | 2026-11-27 |
+| Last updated | 2026-11-28 |
 | Idea brief | [IDEA.md](IDEA.md) |
 | Reviewers | Staff security engineer, SRE, ML engineer (roles) |
 
@@ -1129,7 +1129,7 @@ Nothing that backs a README claim is on this list: each cut removes a claim alon
 | 41 | No IDNA conversion: a non-ASCII host is `null` (denied by allowlists); allowlists use punycode | The standard library has no IDNA; a dependency for it adds parsing ambiguity at a trust boundary, and denying is the safe default | — | 2026-11-27 |
 | 42 | Policies are type-checked against `schemas/policy-input.v1.json` at load; any load error stops `wrap` in every mode | A misspelled field otherwise makes a `deny` rule silently never fire; a broken policy would make `warn` results misleading too | [ADR-0004](docs/adr/0004-policy-engine.md) | 2026-11-27 |
 | 43 | No third-party corpus text in the repository: CI downloads the pinned MCPTox files, verifies SHA-256, and converts them into a git-ignored cache | Maintainer decision; avoids redistributing third-party text. Results stay reproducible through pinned commits and hashes | — | 2026-11-27 |
-| 44 | Config validation lives in the typed strict loader, with `schemas/config.v1.json` published for editors and checked against the loader by a test; the p95 < 5 ms gate is an in-process Go test (`TestLatencyGate`) rather than a separate `tools/benchgate` binary | Same guarantees with one less dependency (no runtime JSON Schema library) and one less tool; measured p95 is about 36 µs | — | 2026-11-28 |
+| 44 | Config validation lives in the typed strict loader, with `schemas/config.v1.json` published for editors and checked against the loader by a test; the p95 < 5 ms gate is an in-process Go test (`TestLatencyGate`) rather than a separate `tools/benchgate` binary | Same guarantees with one less dependency (no runtime JSON Schema library) and one less tool; measured p95 is under 0.1 ms including the audit write | — | 2026-11-28 |
 
 ### 14.2 Open questions
 None block v0.1. Q1 (deny format) is closed by §6.6, and Q2 (pin store and server identity) by §5.3. Open for later versions:
