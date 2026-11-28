@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,10 +56,29 @@ func TestTransparency(t *testing.T) {
 				if obs0 != obs1 {
 					t.Errorf("observation logs differ:\n%s\n---\n%s", obs0, obs1)
 				}
-				if a, b := received(tr0), received(tr1); !reflect.DeepEqual(a, b) {
-					t.Errorf("received messages differ (%d vs %d)", len(a), len(b))
+				// Compared as a multiset: a lab server may interleave a response and a
+				// notification differently from run to run (seen with L-02 on macOS).
+				// Bulwark itself keeps each direction in order (one loop per direction).
+				if a, b := canonical(received(tr0)), canonical(received(tr1)); !reflect.DeepEqual(a, b) {
+					for i := range a {
+						if i >= len(b) || a[i] != b[i] {
+							t.Errorf("received messages differ; first difference:\n%s", a[i])
+							break
+						}
+					}
 				}
 			})
 		}
 	}
+}
+
+// canonical returns the messages as sorted JSON strings.
+func canonical(msgs []any) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		b, _ := json.Marshal(m)
+		out[i] = string(b)
+	}
+	sort.Strings(out)
+	return out
 }
