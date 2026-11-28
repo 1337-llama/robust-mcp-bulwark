@@ -3,6 +3,7 @@
 package proxy
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 )
@@ -17,5 +18,15 @@ func signalGroup(c *exec.Cmd, _ os.Signal) {
 }
 
 var termSignals = []os.Signal{os.Interrupt}
+
+func ignoreSIGPIPE() {}
+
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 0
+}
 
 var sigTerm, sigKill = os.Kill, os.Kill

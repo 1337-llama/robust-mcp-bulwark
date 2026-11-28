@@ -7,12 +7,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +30,8 @@ import (
 )
 
 var version = "dev" // set with -ldflags at release
+
+var validID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 const usage = `usage:
   bulwark wrap    [--server-id ID] [--mode learn|warn|enforce] [--config FILE] [--state-dir DIR] -- <command> [args...]
@@ -110,7 +115,9 @@ func wrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if cfgErr != nil {
-		if effective == "enforce" { // AC-28: never start the child on a bad config in enforce
+		// AC-28. Without --mode the intended mode can't be known from a broken
+		// file (it may say enforce), so fail closed too.
+		if effective == "enforce" || *mode == "" {
 			return fail("%v", cfgErr)
 		}
 		fmt.Fprintf(stderr, "bulwark: warning: %v (using defaults)\n", cfgErr)
@@ -127,9 +134,17 @@ func wrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail("%v", err)
 	}
+	if *serverID != "" && !validID.MatchString(*serverID) { // it becomes a path and a glob
+		return fail("--server-id must match %s", validID)
+	}
 	id, err := state.ServerID(*serverID, effective, digest)
 	if err != nil {
 		return fail("%v", err)
+	}
+	cfgDigest := "none"
+	if b, err := os.ReadFile(*cfgPath); err == nil {
+		sum := sha256.Sum256(b)
+		cfgDigest = "sha256:" + hex.EncodeToString(sum[:])
 	}
 	if *serverID == "" {
 		fmt.Fprintln(stderr, "bulwark: server id", id)
@@ -147,7 +162,7 @@ func wrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	code, err := proxy.Run(context.Background(), proxy.Options{
 		Mode: effective, ServerID: id, MaxMessage: cfg.Limits.MaxMessageBytes, MaxDepth: cfg.Limits.MaxDepth,
 		MaxOutstanding: cfg.Limits.MaxOutstandingRequests, Chain: chain, Conn: conn, Audit: aw,
-		Digest: digest, Version: version,
+		Digest: digest, ConfigDigest: cfgDigest, Version: version,
 	}, argv, stdin, stdout, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "bulwark:", err)

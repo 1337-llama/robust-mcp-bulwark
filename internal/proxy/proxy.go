@@ -43,6 +43,7 @@ type Options struct {
 	Audit          Auditor
 	GracePeriod    time.Duration // each shutdown wait (AC-4: 5 s)
 	Digest         string        // command_digest, for the start record
+	ConfigDigest   string
 	Version        string
 }
 
@@ -53,10 +54,14 @@ type Proxy struct {
 	sessMu   sync.Mutex
 	toChild  *lockedWriter
 	toClient *lockedWriter
+	stderr   io.Writer
+	gone     chan struct{} // closed when writing to the client fails
+	goneOnce sync.Once
 
 	mu        sync.Mutex
 	clientReq map[string]string // outstanding client requests: id -> method (AC-11)
 	serverReq map[string]bool   // outstanding server requests, 2025-11-25 (AC-12)
+	cancelled map[string]bool   // ids the client cancelled: late responses dropped quietly
 	own       map[string]chan *jsonrpc.Message
 	prefix    string
 	counter   atomic.Uint64
@@ -86,25 +91,31 @@ func Run(ctx context.Context, o Options, argv []string, stdin io.Reader, stdout,
 	if _, err := rand.Read(b); err != nil {
 		return 70, err
 	}
-	p := &Proxy{o: o, sess: pipeline.Session{Mode: o.Mode}, toClient: &lockedWriter{w: stdout},
-		clientReq: map[string]string{}, serverReq: map[string]bool{}, own: map[string]chan *jsonrpc.Message{},
-		prefix: "bulwark-" + hex.EncodeToString(b) + "-"}
+	p := &Proxy{o: o, sess: pipeline.Session{Mode: o.Mode}, toClient: &lockedWriter{w: stdout}, stderr: stderr,
+		gone: make(chan struct{}), clientReq: map[string]string{}, serverReq: map[string]bool{}, cancelled: map[string]bool{},
+		own: map[string]chan *jsonrpc.Message{}, prefix: "bulwark-" + hex.EncodeToString(b) + "-"}
+	ignoreSIGPIPE()
 	p.cmd = exec.Command(argv[0], argv[1:]...) // no shell; environment inherited unchanged (AC-1)
 	p.cmd.Stderr = stderr                      // byte-for-byte (AC-3)
+	p.cmd.WaitDelay = time.Second              // if stderr is copied through a pipe a grandchild holds, Wait still returns
 	ownGroup(p.cmd)
 	childIn, err := p.cmd.StdinPipe()
 	if err != nil {
 		return 70, err
 	}
-	childOut, err := p.cmd.StdoutPipe()
+	// The child's stdout is an os.Pipe we own, not StdoutPipe: Wait then returns
+	// as soon as the child exits, even if a grandchild keeps the pipe open (AC-4).
+	outR, outW, err := os.Pipe()
 	if err != nil {
 		return 70, err
 	}
+	p.cmd.Stdout = outW
 	if err := p.cmd.Start(); err != nil {
 		return 70, err
 	}
+	outW.Close()
 	p.toChild = &lockedWriter{w: childIn}
-	p.audit(audit.Record{Event: "start", Detail: map[string]any{"mode": o.Mode, "command_digest": o.Digest, "version": o.Version}})
+	p.audit(audit.Record{Event: "start", Detail: map[string]any{"mode": o.Mode, "command_digest": o.Digest, "config_digest": o.ConfigDigest, "version": o.Version}})
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, termSignals...)
@@ -112,8 +123,8 @@ func Run(ctx context.Context, o Options, argv []string, stdin io.Reader, stdout,
 
 	exited := make(chan error, 1)
 	readDone := make(chan struct{})
-	go func() { p.serverLoop(childOut); close(readDone) }()
-	go func() { <-readDone; exited <- p.cmd.Wait() }()
+	go func() { p.serverLoop(outR); close(readDone) }()
+	go func() { exited <- p.cmd.Wait() }()
 	clientDone := make(chan struct{})
 	go func() { p.clientLoop(stdin); childIn.Close(); close(clientDone) }()
 
@@ -122,6 +133,9 @@ func Run(ctx context.Context, o Options, argv []string, stdin io.Reader, stdout,
 	case waitErr = <-exited:
 	case <-clientDone: // AC-4: stdin closed; give the child time, then escalate
 		waitErr = p.shutdown(exited)
+	case <-p.gone: // the client's stdout is broken: same as a closed stdin
+		childIn.Close()
+		waitErr = p.shutdown(exited)
 	case s := <-sigs: // AC-5a
 		signalGroup(p.cmd, s)
 		waitErr = p.shutdown(exited)
@@ -129,14 +143,15 @@ func Run(ctx context.Context, o Options, argv []string, stdin io.Reader, stdout,
 		signalGroup(p.cmd, sigTerm)
 		waitErr = p.shutdown(exited)
 	}
-	code := 0
-	var ee *exec.ExitError
-	if errors.As(waitErr, &ee) {
-		code = ee.ExitCode()
-		if code < 0 {
-			code = 128 + 15
-		}
+	// The child is gone. Let the reader drain what it already wrote, then make
+	// sure nothing in its process group outlives the gateway.
+	select {
+	case <-readDone:
+	case <-time.After(500 * time.Millisecond):
 	}
+	signalGroup(p.cmd, sigKill)
+	outR.Close()
+	code := exitCode(waitErr)
 	p.audit(audit.Record{Event: "stop", Detail: map[string]any{"exit_code": code}})
 	return code, nil
 }
@@ -165,7 +180,7 @@ func (p *Proxy) audit(r audit.Record) bool {
 	}
 	r.ServerID = p.o.ServerID
 	if err := p.o.Audit.Write(r); err != nil {
-		fmt.Fprintln(os.Stderr, "bulwark: audit_error:", err)
+		fmt.Fprintln(p.stderr, "bulwark: audit_error:", err)
 		return p.o.Mode != "enforce"
 	}
 	return true
@@ -178,7 +193,14 @@ func (p *Proxy) revision() string {
 }
 
 func (p *Proxy) reply(w *lockedWriter, id *jsonrpc.Value, code int, msg string) {
-	w.line(jsonrpc.ErrorResponse(id, code, msg, nil))
+	p.write(w, jsonrpc.ErrorResponse(id, code, msg, nil))
+}
+
+// write sends a line; a failure writing to the client means the client is gone.
+func (p *Proxy) write(w *lockedWriter, b []byte) {
+	if err := w.line(b); err != nil && w == p.toClient {
+		p.goneOnce.Do(func() { close(p.gone) })
+	}
 }
 
 func (p *Proxy) record(event string, m *jsonrpc.Message, dir string, res *pipeline.Result, reason string) bool {
@@ -249,6 +271,21 @@ func (p *Proxy) fromClient(line []byte) {
 			return
 		}
 	}
+	if m.Kind == jsonrpc.Notification && m.Method == "notifications/cancelled" {
+		// The cancelled request will get no response; free its slot, and drop a
+		// late response quietly rather than as a violation.
+		if id := m.Root.Get("params").Get("requestId"); id != nil {
+			p.mu.Lock()
+			if _, ok := p.clientReq[key(id)]; ok {
+				delete(p.clientReq, key(id))
+				if len(p.cancelled) >= p.o.MaxOutstanding {
+					p.cancelled = map[string]bool{}
+				}
+				p.cancelled[key(id)] = true
+			}
+			p.mu.Unlock()
+		}
+	}
 	if m.Kind == jsonrpc.Request {
 		p.mu.Lock()
 		full := len(p.clientReq) >= p.o.MaxOutstanding
@@ -274,7 +311,7 @@ func (p *Proxy) fromClient(line []byte) {
 		p.blockedFromClient(m, reply, ok)
 		return
 	}
-	p.toChild.line(jsonrpc.Serialize(res.Msg.Root))
+	p.write(p.toChild, jsonrpc.Serialize(res.Msg.Root))
 }
 
 // blockedFromClient tells the right party about a blocked client message (AC-26a).
@@ -286,9 +323,9 @@ func (p *Proxy) blockedFromClient(m *jsonrpc.Message, reply *jsonrpc.Message, au
 		p.mu.Unlock()
 		switch {
 		case !audited && m.Method == "tools/call": // AC-24
-			p.toClient.line(blockedToolResult(m.ID, "Blocked by MCP Bulwark (audit log unavailable)", p.revision() == mcprev.Rev2026))
+			p.write(p.toClient, blockedToolResult(m.ID, "Blocked by MCP Bulwark (audit log unavailable)", p.revision() == mcprev.Rev2026))
 		case reply != nil:
-			p.toClient.line(jsonrpc.Serialize(reply.Root))
+			p.write(p.toClient, jsonrpc.Serialize(reply.Root))
 		default:
 			p.reply(p.toClient, m.ID, jsonrpc.CodeInternal, "Blocked by MCP Bulwark")
 		}
@@ -335,12 +372,20 @@ func (p *Proxy) fromServer(line []byte) {
 	case jsonrpc.Response:
 		k := key(m.ID)
 		if m.ID.Kind == jsonrpc.String && len(m.ID.Str) > len(p.prefix) && m.ID.Str[:len(p.prefix)] == p.prefix {
-			p.deliverOwn(k, m) // AC-13: never forwarded
+			if !p.deliverOwn(k, m) { // AC-13: never forwarded
+				p.record("protocol_violation", m, "s2c", nil, "response to no gateway request")
+			}
 			return
 		}
 		method, ok := p.clientMethod(k)
 		if !ok { // AC-11
-			p.record("protocol_violation", m, "s2c", nil, "response to no outstanding request")
+			p.mu.Lock()
+			late := p.cancelled[k]
+			delete(p.cancelled, k)
+			p.mu.Unlock()
+			if !late {
+				p.record("protocol_violation", m, "s2c", nil, "response to no outstanding request")
+			}
 			return
 		}
 		p.o.Conn.Response(m)
@@ -361,8 +406,16 @@ func (p *Proxy) fromServer(line []byte) {
 			}
 		}
 		p.mu.Lock()
-		p.serverReq[key(m.ID)] = true
+		full := len(p.serverReq) >= p.o.MaxOutstanding
+		if !full {
+			p.serverReq[key(m.ID)] = true
+		}
 		p.mu.Unlock()
+		if full { // AC-14 applies to server requests too
+			p.record("limit_exceeded", m, "s2c", nil, "outstanding server requests")
+			p.reply(p.toChild, m.ID, jsonrpc.CodeLimit, "Too many outstanding requests")
+			return
+		}
 	}
 	p.sessMu.Lock()
 	res := p.o.Chain.Run(context.Background(), m, pipeline.ServerToClient, &p.sess)
@@ -381,7 +434,7 @@ func (p *Proxy) fromServer(line []byte) {
 		}
 		return
 	}
-	p.toClient.line(jsonrpc.Serialize(res.Msg.Root))
+	p.write(p.toClient, jsonrpc.Serialize(res.Msg.Root))
 }
 
 func (p *Proxy) clientMethod(k string) (string, bool) {
@@ -401,6 +454,8 @@ func (p *Proxy) takeClientReq(k string) bool {
 
 // Request sends a gateway-originated request to the server and waits for its
 // response, which is never forwarded to the client (AC-13; used by spec 003).
+// It must not be called from the server-to-client path (an interceptor or a
+// callback run by serverLoop): that goroutine delivers the answer, so it would deadlock.
 func (p *Proxy) Request(ctx context.Context, method string, params *jsonrpc.Value) (*jsonrpc.Message, error) {
 	id := &jsonrpc.Value{Kind: jsonrpc.String, Str: p.prefix + strconv.FormatUint(p.counter.Add(1), 10)}
 	ch := make(chan *jsonrpc.Message, 1)
@@ -414,6 +469,9 @@ func (p *Proxy) Request(ctx context.Context, method string, params *jsonrpc.Valu
 		msg.Members = append(msg.Members, jsonrpc.Member{Name: "params", Value: params})
 	}
 	if err := p.toChild.line(jsonrpc.Serialize(msg)); err != nil {
+		p.mu.Lock()
+		delete(p.own, key(id))
+		p.mu.Unlock()
 		return nil, err
 	}
 	select {
@@ -427,7 +485,7 @@ func (p *Proxy) Request(ctx context.Context, method string, params *jsonrpc.Valu
 	}
 }
 
-func (p *Proxy) deliverOwn(k string, m *jsonrpc.Message) {
+func (p *Proxy) deliverOwn(k string, m *jsonrpc.Message) bool {
 	p.mu.Lock()
 	ch := p.own[k]
 	delete(p.own, k)
@@ -435,6 +493,7 @@ func (p *Proxy) deliverOwn(k string, m *jsonrpc.Message) {
 	if ch != nil {
 		ch <- m
 	}
+	return ch != nil
 }
 
 func errString(err error) string {

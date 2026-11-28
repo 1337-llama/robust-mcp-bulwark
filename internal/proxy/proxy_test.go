@@ -219,3 +219,33 @@ func TestAuditFailure(t *testing.T) {
 		<-done
 	}
 }
+
+// Verifies: FR-020 (AC-4: exit with the child's code as soon as it exits, even
+// if a grandchild still holds stdout; the grandchild is cleaned up)
+func TestChildExitWithGrandchild(t *testing.T) {
+	ir, _ := io.Pipe() // the client never closes stdin
+	conn := &mcprev.Conn{}
+	o := Options{Mode: "warn", MaxMessage: 1 << 16, MaxDepth: 64, MaxOutstanding: 8, Conn: conn, Chain: pipeline.Chain{pipeline.Revision{Conn: conn}}}
+	t0 := time.Now()
+	code, err := Run(context.Background(), o, []string{"sh", "-c", "sleep 8 & exit 3"}, ir, io.Discard, io.Discard)
+	if err != nil || code != 3 || time.Since(t0) > 3*time.Second {
+		t.Fatalf("code %d err %v after %v", code, err, time.Since(t0))
+	}
+}
+
+// A cancelled request frees its slot and its late response is dropped quietly.
+func TestCancelled(t *testing.T) {
+	r := start(t, "mute", "warn")
+	for i := 1; i <= 2; i++ { // MaxOutstanding is 2
+		r.send(`{"jsonrpc":"2.0","id":` + strconv.Itoa(i) + `,"method":"x","params":{` + meta + `}}`)
+		r.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":` + strconv.Itoa(i) + `}}`)
+	}
+	r.send(`{"jsonrpc":"2.0","id":3,"method":"x","params":{` + meta + `}}`)
+	r.send(`{"jsonrpc":"2.0","id":4,"method":"x","params":{` + meta + `}}`)
+	r.send(`{"jsonrpc":"2.0","id":5,"method":"x","params":{` + meta + `}}`)
+	if got := string(jsonrpc.Serialize(r.recv(t).Root)); !strings.Contains(got, `"id":5,"error":{"code":-32010`) {
+		t.Errorf("cancelled requests still hold slots: %s", got)
+	}
+	r.in.Close()
+	<-r.done
+}

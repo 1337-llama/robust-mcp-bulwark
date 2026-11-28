@@ -3,8 +3,10 @@
 package proxy
 
 import (
+	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 )
 
@@ -19,5 +21,22 @@ func signalGroup(c *exec.Cmd, sig os.Signal) {
 }
 
 var termSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+
+// ignoreSIGPIPE keeps a crashed client from killing the gateway on its next
+// write; the write error is handled as "client gone" instead.
+func ignoreSIGPIPE() { signal.Ignore(syscall.SIGPIPE) }
+
+// exitCode maps a wait error to the child's exit code; a signal-killed child
+// gives 128 + signal, as shells report it.
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return 0
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return ee.ExitCode()
+}
 
 const sigTerm, sigKill = syscall.SIGTERM, syscall.SIGKILL
