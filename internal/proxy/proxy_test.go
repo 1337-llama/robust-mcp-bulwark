@@ -249,3 +249,29 @@ func TestCancelled(t *testing.T) {
 	r.in.Close()
 	<-r.done
 }
+
+// Verifies: FR-031 (AC-12: under 2025-11-25 a client response must match an
+// outstanding server request; an unknown one is dropped, a matched one forwarded)
+func TestServerRequestTracking(t *testing.T) {
+	var toChild, toClient bytes.Buffer
+	conn := &mcprev.Conn{}
+	p := &Proxy{o: Options{Mode: "warn", MaxDepth: 64, MaxOutstanding: 8, Conn: conn, Chain: pipeline.Chain{pipeline.Revision{Conn: conn}}},
+		toClient: &lockedWriter{w: &toClient}, toChild: &lockedWriter{w: &toChild}, stderr: io.Discard, gone: make(chan struct{}),
+		clientReq: map[string]string{}, serverReq: map[string]bool{}, cancelled: map[string]bool{}, own: map[string]chan *jsonrpc.Message{}}
+	p.fromServer([]byte(`{"jsonrpc":"2.0","id":"s1","method":"roots/list"}`))
+	if !strings.Contains(toClient.String(), `"id":"s1","method":"roots/list"`) {
+		t.Fatalf("server request not forwarded: %q", toClient.String())
+	}
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":"zz","result":{}}`))
+	if toChild.Len() != 0 {
+		t.Errorf("unmatched client response forwarded: %q", toChild.String())
+	}
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":"s1","result":{"roots":[]}}`))
+	if !strings.Contains(toChild.String(), `"id":"s1","result"`) {
+		t.Errorf("matched client response not forwarded: %q", toChild.String())
+	}
+	p.fromClient([]byte(`{"jsonrpc":"2.0","id":"s1","result":{"roots":[]}}`))
+	if strings.Count(toChild.String(), `"id":"s1"`) != 1 {
+		t.Error("a second response to the same server request was forwarded")
+	}
+}

@@ -2,7 +2,7 @@
 
 > A security gateway for AI agents. MCP Bulwark sits between an agent and its MCP tools. It pins and inspects tool definitions, enforces least-privilege policy on every tool call, redacts secrets, and keeps a tamper-evident audit trail. Every protection is proven by an attack test that runs in CI.
 
-**Status: 🚧 Design approved; specs 001–008 written and reviewed. No code yet — implementation starts after the maintainer's check-in.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The [design document](DESIGN.md), [decision records](docs/adr/), [design review](docs/reviews/design-review-1.md), and [specs](specs/README.md) are part of the project. Every spec was checked by an independent reviewer session before merge.
+**Status: 🚧 Building. The attack suite (spec 001) and the transparent, audited proxy (spec 002) work; the defenses come next.** This project follows a spec-driven process ([docs/WORKFLOW.md](docs/WORKFLOW.md)): idea → design → specs → build. The [design document](DESIGN.md), [decision records](docs/adr/), [design review](docs/reviews/design-review-1.md), and [specs](specs/README.md) are part of the project. Every spec was checked by an independent reviewer session before merge.
 
 ## The problem
 
@@ -43,6 +43,39 @@ The repo includes an **attack suite**: deliberately malicious (harmless) MCP ser
 | L-06 Unicode smuggling | | |
 | L-07 Poisoned server instructions | | |
 | L-08 Input-request credential solicitation | | |
+
+## Try it (from source)
+
+Requires Go 1.27 or later.
+
+```bash
+go install github.com/1337-llama/robust-mcp-bulwark/cmd/bulwark@latest
+```
+
+Then change your MCP client's server command so it runs through Bulwark:
+
+```json
+{"command": "bulwark", "args": ["wrap", "--server-id", "fs", "--mode", "warn", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem@<exact-version>", "/workspace"]}
+```
+
+`warn` (the default) records everything and blocks no tool calls yet; strict parsing and the size, depth and notification-rate limits apply in every mode. Check the audit log:
+
+```bash
+bulwark audit tail --server-id fs
+```
+
+```bash
+bulwark audit verify --server-id fs
+```
+
+So far `bulwark wrap` is a strict, transparent, fully audited proxy. The defenses (pinning, analyzers, policy, secret redaction) arrive with specs 003–007; see the roadmap below.
+
+## Limitations
+
+- **Bulwark is not a sandbox.** A malicious stdio server is local code running as you: it can read files or use the network directly, without going through MCP (AR-1). Run untrusted servers in a container, for example `bulwark wrap -- docker run -i --rm --network none <image>`, and keep Bulwark's state directory out of any directory mounted into it (AR-2).
+- **Bulwark adds no request timeout.** A server that never answers can stall its client, with or without Bulwark.
+- **Prompt injection is limited, not solved.** Bulwark restricts what a hijacked agent can see and do; it can't make a model ignore instructions.
+- **The audit chain detects edits, not truncation.** Modified, inserted, deleted or reordered records are caught; a truncated tail or a wholly rewritten file needs an external anchor (planned for v0.2). Up to one second of records can be lost in a crash.
 
 ## Roadmap: attacks first, then defenses
 

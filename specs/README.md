@@ -7,7 +7,7 @@ Each spec is one vertical slice of v0.1, traced to requirements in [DESIGN.md](.
 | Spec | Title | Milestone | Status |
 |---|---|---|---|
 | [001](001-attack-suite/spec.md) | Attack suite: lab servers, replay client, runner, CI | M1 | Ready |
-| [002](002-stdio-proxy/spec.md) | stdio proxy, strict JSON-RPC, revision handling, audit log, terminal-safe output | M1 | Ready |
+| [002](002-stdio-proxy/spec.md) | stdio proxy, strict JSON-RPC, revision handling, audit log, terminal-safe output | M1 | Done |
 | [003](003-pinning/spec.md) | Fingerprinting, pin store, modes, verify-before-call, server metadata | M2 | Ready |
 | [004](004-analyzers/spec.md) | Static analyzers on all channels + detection corpora | M2 | Ready |
 | [005](005-tools-cli/spec.md) | `tools` CLI: list, diff, approve, reject | M2 | Ready |

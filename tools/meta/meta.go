@@ -214,8 +214,9 @@ func pending(root string) []string {
 }
 
 var (
-	inetSocket = regexp.MustCompile(`\bsocket(pair)?\((AF|PF)_INET6?\b`)
-	labExec    = regexp.MustCompile(`\bexecve\("[^"]*bulwark-lab"`)
+	inetSocket  = regexp.MustCompile(`\bsocket(pair)?\((AF|PF)_INET6?\b`)
+	labExec     = regexp.MustCompile(`\bexecve\("[^"]*bulwark-lab"`)
+	gatewayExec = regexp.MustCompile(`\bexecve\("[^"]*/bulwark"`)
 )
 
 // inetSockets returns every strace line that creates an internet socket, from
@@ -225,6 +226,9 @@ func inetSockets(trace string) []string {
 	var bad []string
 	if !labExec.MatchString(trace) {
 		bad = append(bad, "trace shows no execve of bulwark-lab: the lab servers did not run under strace")
+	}
+	if !gatewayExec.MatchString(trace) { // spec 002 AC-32: the gateway itself is traced too
+		bad = append(bad, "trace shows no execve of bulwark: the gateway did not run under strace")
 	}
 	for _, line := range strings.Split(trace, "\n") {
 		if inetSocket.MatchString(line) {

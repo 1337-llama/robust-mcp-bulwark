@@ -22,13 +22,13 @@ Bulwark sets its own lower depth limit (64). When the standard library's `encodi
 | `internal/proxy/` | New | Child process in its own process group (`SysProcAttr.Setpgid`), with signals sent to the group; SIGINT/SIGTERM forwarding; pipes; stderr passthrough; the shutdown sequence; two reader goroutines; per-pipe writer mutex; outstanding-request tables; gateway-originated requests; the reject-routing table (AC-7, AC-26a) |
 | `internal/pipeline/` | New | Interceptor interface (§5.1), ordered chain, panic recovery, built-in interceptors: limits, revision, ID tracking, notification rate limit |
 | `internal/audit/` | New | Writer (hash chain, HMAC key, single-write records, periodic `fsync`, fail-closed signal), `Verify`, `Tail` |
-| `internal/config/` | New | Strict YAML loading (version 1), defaults, validation, embedded JSON Schema published at `schemas/config.v1.json` |
+| `internal/config/` | New | Strict YAML loading (version 1), defaults, typed validation; `schemas/config.v1.json` published for editors and kept in sync by a test (decision 44) |
 | `internal/state/` | New | `state_dir` creation and permission checks; `command_digest`; default `server_id` |
 | `internal/termsafe/` | New | Escapes every code point in Unicode categories Cc, Cf, Zl, and Zp as `\u{XXXX}` (Go `unicode.Cc`, `unicode.Cf`, `unicode.Zl`, `unicode.Zp` tables) |
 | `lab/suite/transparency_test.go` | New | AC-6: compares `none` with `learn` through `bulwark wrap` for every scenario and revision |
 | `.github/workflows/ci.yml` | Changed | Benchmark gate (AC-31); fuzz job (60 s per target on PRs) |
 | `tools/meta` | Changed | Import check extended to `cmd/` and `internal/` (AC-32); hidden-character check over all tracked text files (AC-34) |
-| `tools/benchgate/` | New | Reads benchmark samples and fails if p95 ≥ 5 ms (AC-31) |
+| `internal/pipeline/bench_test.go` | New | `TestLatencyGate` fails if p95 ≥ 5 ms (AC-31); replaces the planned `tools/benchgate` (decision 44) |
 
 ## Interfaces and data structures
 ```go
@@ -91,7 +91,7 @@ type Interceptor interface {
 | AC-26, AC-26a | A fault-injecting test interceptor, applied to a client request, a server response, a 2025-11-25 server request, and a notification, asserting the recipient of each error | `internal/pipeline/pipeline_test.go`, `internal/proxy/blocked_test.go` |
 | AC-27 | Property test over all code points in Cc, Cf, Zl, Zp (from Go's `unicode` tables) and random runes; golden strings: the L-06 Tag-block payload, CSI color, OSC 8 hyperlink, RLO-reversed text | `internal/termsafe/` |
 | AC-28–AC-30 | Unit tests: unknown keys, defaults, permission modes, digest of known argv | `internal/config/`, `internal/state/` |
-| AC-31 | Benchmark over `testdata/transcripts/*.jsonl`, recorded from the spec 001 suite; CI computes p95 from `-benchtime` samples via a small helper | `internal/pipeline/bench_test.go`, `tools/benchgate/` |
+| AC-31 | `TestLatencyGate` over a generated message mix (`testdata/transcript.jsonl`), including the audit write; p95 computed in the test (decision 44) | `internal/pipeline/bench_test.go`, `tools/benchgate/` |
 | AC-32 | `tools/meta` import check; the spec 001 trace now includes `bulwark` | `tools/meta/` |
 | AC-33 | Integration: a fake upstream sending 1,000 `notifications/progress` messages with `notifications/tools/list_changed` mixed in. Assert ≤ 20 forwarded per second, one `rate_limited` record per second, every `list_changed` processed internally, and at most one forwarded per second | `internal/pipeline/ratelimit_test.go` |
 | AC-34 | Unit (fixture files with RLO, ZWSP, and a Tag character fail; plain files pass) | `tools/meta/hidden_test.go` |

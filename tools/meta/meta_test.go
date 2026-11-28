@@ -86,7 +86,8 @@ func TestRepoPasses(t *testing.T) {
 
 // Verifies: NFR-003 (AC-21 trace check)
 func TestInetSockets(t *testing.T) {
-	trace := `1233  execve("/tmp/x/bulwark-lab", ["bulwark-lab", "l01-notes"], 0x0 /* 9 vars */) = 0
+	trace := `1232  execve("/tmp/x/bulwark", ["bulwark", "wrap"], 0x0 /* 9 vars */) = 0
+1233  execve("/tmp/x/bulwark-lab", ["bulwark-lab", "l01-notes"], 0x0 /* 9 vars */) = 0
 1234  socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 3
 1238  socketpair(PF_INET, SOCK_STREAM, 0, [3, 4]) = -1
 [pid  1235] connect(3, {sa_family=AF_UNIX, sun_path="/x"}, 110) = 0
@@ -97,8 +98,11 @@ func TestInetSockets(t *testing.T) {
 	if len(got) != 3 || !strings.Contains(got[0], "PF_INET") || !strings.Contains(got[1], "AF_INET,") || !strings.Contains(got[2], "AF_INET6") {
 		t.Errorf("got %q", got)
 	}
-	if inetSockets("1 execve(\"/b/bulwark-lab\", [], 0) = 0\n1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") != nil {
+	if inetSockets("1 execve(\"/b/bulwark\", [], 0) = 0\n1 execve(\"/b/bulwark-lab\", [], 0) = 0\n1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") != nil {
 		t.Error("AF_UNIX flagged")
+	}
+	if got := inetSockets("1 execve(\"/b/bulwark-lab\", [], 0) = 0\n"); len(got) != 1 || !strings.Contains(got[0], "gateway") {
+		t.Errorf("a trace without the gateway execve must fail: %v", got)
 	}
 	if inetSockets("1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") == nil {
 		t.Error("a trace without the lab execve must fail")

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,10 +56,31 @@ func TestTransparency(t *testing.T) {
 				if obs0 != obs1 {
 					t.Errorf("observation logs differ:\n%s\n---\n%s", obs0, obs1)
 				}
-				if a, b := received(tr0), received(tr1); !reflect.DeepEqual(a, b) {
-					t.Errorf("received messages differ (%d vs %d)", len(a), len(b))
+				// Compared as a multiset. The Go SDK debounces list_changed with a 10 ms
+				// timer (go-sdk v1.8.0 mcp/server.go, notificationDelay), so L-02's
+				// notification can land before or after the tool response depending on
+				// scheduling (seen on a macOS runner). Bulwark keeps each direction in
+				// order (one loop per direction), so the multiset is what it must preserve.
+				if a, b := canonical(received(tr0)), canonical(received(tr1)); !reflect.DeepEqual(a, b) {
+					for i := range a {
+						if i >= len(b) || a[i] != b[i] {
+							t.Errorf("received messages differ; first difference:\n%s", a[i])
+							break
+						}
+					}
 				}
 			})
 		}
 	}
+}
+
+// canonical returns the messages as sorted JSON strings.
+func canonical(msgs []any) []string {
+	out := make([]string, len(msgs))
+	for i, m := range msgs {
+		b, _ := json.Marshal(m)
+		out[i] = string(b)
+	}
+	sort.Strings(out)
+	return out
 }

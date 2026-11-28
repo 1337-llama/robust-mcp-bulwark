@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Ready (on merge of this PR) |
+| Status | Done |
 | Traces to | FR-020, FR-026, FR-028, FR-029, FR-031, FR-036, NFR-004, NFR-005, NFR-006, NFR-007, NFR-013, NFR-014; threats T-01, T-03, T-04, T-09, T-10, T-11, T-15, T-17 |
 | Milestone | M1 |
 | Depends on | Spec 001 (the suite is used for the transparency test) |

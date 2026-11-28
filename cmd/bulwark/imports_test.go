@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Verifies: NFR-014 (spec 002 AC-32: the gateway's own packages never import net, net/http or net/rpc)
+// Verifies: NFR-007, NFR-014 (spec 002 AC-32: the gateway's own packages never import net, net/http or net/rpc)
 func TestNoNetworkImports(t *testing.T) {
 	for _, root := range []string{"../../cmd", "../../internal"} {
 		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

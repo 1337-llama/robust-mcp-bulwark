@@ -81,3 +81,23 @@ func TestKeyRace(t *testing.T) {
 		}
 	}
 }
+
+// Verifies: NFR-006 (AC-25: one write per record; fsync within a second of an unsynced record)
+func TestSyncWithinASecond(t *testing.T) {
+	dir := t.TempDir()
+	w, err := Open(filepath.Join(dir, "a"), filepath.Join(dir, "k"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	w.Write(Record{Event: "start"})
+	w.mu.Lock()
+	pending := !w.synced
+	w.mu.Unlock()
+	time.Sleep(1200 * time.Millisecond)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !pending || !w.synced {
+		t.Errorf("fsync not scheduled within 1 s (pending %v, synced %v)", pending, w.synced)
+	}
+}
