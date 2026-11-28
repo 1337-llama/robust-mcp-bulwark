@@ -42,6 +42,8 @@ type Options struct {
 	Conn           *mcprev.Conn
 	Audit          Auditor
 	GracePeriod    time.Duration // each shutdown wait (AC-4: 5 s)
+	Digest         string        // command_digest, for the start record
+	Version        string
 }
 
 type Proxy struct {
@@ -102,7 +104,7 @@ func Run(ctx context.Context, o Options, argv []string, stdin io.Reader, stdout,
 		return 70, err
 	}
 	p.toChild = &lockedWriter{w: childIn}
-	p.audit(audit.Record{Event: "start", Detail: map[string]any{"mode": o.Mode}})
+	p.audit(audit.Record{Event: "start", Detail: map[string]any{"mode": o.Mode, "command_digest": o.Digest, "version": o.Version}})
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, termSignals...)
