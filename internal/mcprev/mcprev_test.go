@@ -2,6 +2,8 @@ package mcprev
 
 import (
 	"slices"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/1337-llama/robust-mcp-bulwark/internal/jsonrpc"
@@ -61,5 +63,35 @@ func TestViolations(t *testing.T) {
 	r := msg(t, `{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}`).Root.Get("result")
 	if !InputRequiredViolation(Rev2026, "tools/list", r) || InputRequiredViolation(Rev2026, "tools/call", r) || InputRequiredViolation(Rev2025, "tools/list", r) {
 		t.Error("input_required placement")
+	}
+}
+
+// The pending table stays bounded and keeps an in-flight initialize; it is
+// safe for concurrent Request and Response calls (run with -race).
+func TestPendingBoundAndRace(t *testing.T) {
+	var c Conn
+	c.Request(msg(t, initReq)) // id 2, in flight
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				id := strconv.Itoa(1000 + g*1000 + i)
+				c.Request(msg(t, `{"jsonrpc":"2.0","id":`+id+`,"method":"x","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`))
+				c.Response(msg(t, `{"jsonrpc":"2.0","id":`+id+`,"error":{"code":-1,"message":"x"}}`))
+			}
+		}(g)
+	}
+	wg.Wait()
+	for i := 0; i < 2*maxPending; i++ {
+		c.Request(msg(t, `{"jsonrpc":"2.0","id":"u`+strconv.Itoa(i)+`","method":"x","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`))
+	}
+	if len(c.pending) > maxPending {
+		t.Errorf("pending grew to %d", len(c.pending))
+	}
+	c.Response(msg(t, initOK))
+	if rev, _ := c.Request(msg(t, plain)); rev != Rev2025 {
+		t.Errorf("in-flight initialize was evicted: %q", rev)
 	}
 }
