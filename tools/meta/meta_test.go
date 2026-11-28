@@ -76,7 +76,7 @@ func TestCoverageAndPending(t *testing.T) {
 }
 
 func TestRepoPasses(t *testing.T) {
-	for name, check := range map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending} {
+	for name, check := range map[string]func(string) []string{"labels": labels, "coverage": coverage, "pending": pending, "hidden": hidden} {
 		if got := check("../.."); len(got) > 0 {
 			t.Errorf("%s on this repo: %v", name, got)
 		}
@@ -101,5 +101,14 @@ func TestInetSockets(t *testing.T) {
 	}
 	if inetSockets("1 socket(AF_UNIX, SOCK_STREAM, 0) = 3\n") == nil {
 		t.Error("a trace without the lab execve must fail")
+	}
+}
+
+// Verifies: FR-029 (spec 002 AC-34 hidden-character check)
+func TestHiddenRunes(t *testing.T) {
+	for in, want := range map[string]int{"plain\ttext\r\n": 0, "rlo\u202e": 1, "zwsp\u200b": 1, "tag\U000E0041": 1, "esc\x1b[": 1} {
+		if got := hiddenRunes(in); got != want {
+			t.Errorf("%q: %d, want %d", in, got, want)
+		}
 	}
 }
