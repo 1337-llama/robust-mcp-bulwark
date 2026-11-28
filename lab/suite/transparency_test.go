@@ -56,9 +56,11 @@ func TestTransparency(t *testing.T) {
 				if obs0 != obs1 {
 					t.Errorf("observation logs differ:\n%s\n---\n%s", obs0, obs1)
 				}
-				// Compared as a multiset: a lab server may interleave a response and a
-				// notification differently from run to run (seen with L-02 on macOS).
-				// Bulwark itself keeps each direction in order (one loop per direction).
+				// Compared as a multiset. The Go SDK debounces list_changed with a 10 ms
+				// timer (go-sdk v1.8.0 mcp/server.go, notificationDelay), so L-02's
+				// notification can land before or after the tool response depending on
+				// scheduling (seen on a macOS runner). Bulwark keeps each direction in
+				// order (one loop per direction), so the multiset is what it must preserve.
 				if a, b := canonical(received(tr0)), canonical(received(tr1)); !reflect.DeepEqual(a, b) {
 					for i := range a {
 						if i >= len(b) || a[i] != b[i] {
