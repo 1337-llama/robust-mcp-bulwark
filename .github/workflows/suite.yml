@@ -18,6 +18,7 @@ jobs:
       - name: Build (network allowed only here)
         run: |
           go build -o "$RUNNER_TEMP/bulwark-lab" ./lab/cmd/bulwark-lab
+          go build -o "$RUNNER_TEMP/bulwark" ./cmd/bulwark
           go test -c -o "$RUNNER_TEMP/suite.test" ./lab/suite
           go build -o "$RUNNER_TEMP/meta" ./tools/meta
           go build -o "$RUNNER_TEMP/ci-summary" ./tools/ci-summary
@@ -26,7 +27,7 @@ jobs:
         run: |
           for i in 1 2; do
             sudo unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
-              env CI=true HOME="$HOME" BULWARK_LAB_BIN="$RUNNER_TEMP/bulwark-lab" BULWARK_RESULTS="$RUNNER_TEMP/results-$i.json" \
+              env CI=true HOME="$HOME" BULWARK_LAB_BIN="$RUNNER_TEMP/bulwark-lab" BULWARK_BIN="$RUNNER_TEMP/bulwark" BULWARK_RESULTS="$RUNNER_TEMP/results-$i.json" \
               strace -f -qq -e trace=%network,execve -o "$RUNNER_TEMP/trace-$i.txt" "$RUNNER_TEMP/suite.test" -test.count=1
           done
       - name: No internet sockets in either trace

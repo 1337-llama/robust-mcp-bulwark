@@ -72,8 +72,16 @@ func (c *Conn) track(m *jsonrpc.Message, what string) {
 	if m.Kind != jsonrpc.Request {
 		return
 	}
-	if c.pending == nil || len(c.pending) >= maxPending {
+	if c.pending == nil {
 		c.pending = map[string]string{}
+	}
+	if len(c.pending) >= maxPending { // evict a modern entry, never an in-flight initialize
+		for k, v := range c.pending {
+			if v != "initialize" {
+				delete(c.pending, k)
+				break
+			}
+		}
 	}
 	c.pending[string(jsonrpc.Serialize(m.ID))] = what
 }

@@ -6,11 +6,13 @@ package suite
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/1337-llama/robust-mcp-bulwark/lab/manifest"
@@ -99,6 +101,23 @@ func runCell(t *testing.T, m *manifest.Manifest, run manifest.Run, cond, rev str
 		}
 		return "fail", "gateway conditions need the bulwark binary (spec 002 onward)"
 	}
+	transcript, obs, err := play(t, m, run, rev, nil)
+	if err == replay.ErrTimeout || (err != nil && strings.Contains(err.Error(), "timeout")) {
+		return "timeout", err.Error()
+	}
+	if err != nil {
+		return "fail", err.Error()
+	}
+	if d := Check(run.Expect[cond], Observables(m.ID, transcript, obs), nil); d != "" {
+		return "fail", d
+	}
+	return "pass", ""
+}
+
+// play runs one scenario script against a fresh lab server, optionally behind
+// a wrapper command (for example bulwark wrap), and returns the transcript and
+// the observation log.
+func play(t *testing.T, m *manifest.Manifest, run manifest.Run, rev string, wrapper []string) (string, string, error) {
 	dir := t.TempDir()
 	for _, d := range []string{"private", "workspace"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o700); err != nil {
@@ -110,7 +129,8 @@ func runCell(t *testing.T, m *manifest.Manifest, run manifest.Run, cond, rev str
 	}
 	canaries, _ := json.Marshal(m.Canaries)
 	obsPath := filepath.Join(dir, "obs.jsonl")
-	cmd := exec.Command(labBin, m.Server)
+	argv := append(append([]string{}, wrapper...), labBin, m.Server)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "BULWARK_LAB=1", "BULWARK_LAB_DIR="+dir, "BULWARK_LAB_OBS="+obsPath, "BULWARK_LAB_CANARIES="+string(canaries))
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
@@ -125,16 +145,10 @@ func runCell(t *testing.T, m *manifest.Manifest, run manifest.Run, cond, rev str
 	stdin.Close()
 	<-c.Done()
 	cmd.Wait()
-	os.WriteFile(filepath.Join(dir, "transcript.jsonl"), transcript.Bytes(), 0o644)
-	if runErr == replay.ErrTimeout || (runErr != nil && bytes.Contains([]byte(runErr.Error()), []byte("timeout"))) {
-		return "timeout", runErr.Error()
-	}
 	if runErr != nil {
-		return "fail", runErr.Error() + "\n" + stderr.String()
+		runErr = fmt.Errorf("%w\n%s", runErr, stderr.String())
 	}
 	obs, _ := os.ReadFile(obsPath)
-	if d := Check(run.Expect[cond], Observables(m.ID, transcript.String(), string(obs)), nil); d != "" {
-		return "fail", d
-	}
-	return "pass", ""
+	// The run directory differs per run; normalize it so runs can be compared.
+	return strings.ReplaceAll(transcript.String(), dir, "{{lab_dir}}"), string(obs), runErr
 }
