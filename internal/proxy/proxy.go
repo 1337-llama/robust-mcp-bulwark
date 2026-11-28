@@ -267,7 +267,11 @@ func (p *Proxy) fromClient(line []byte) {
 	p.sessMu.Unlock()
 	ok := p.record("call_decision", m, "c2s", &res, errString(res.Err))
 	if res.Verdict == pipeline.Block || !ok {
-		p.blockedFromClient(m, res.Msg, ok)
+		var reply *jsonrpc.Message
+		if res.Verdict == pipeline.Block {
+			reply = res.Msg // a blocking control's own reply; never the forwarded message itself
+		}
+		p.blockedFromClient(m, reply, ok)
 		return
 	}
 	p.toChild.line(jsonrpc.Serialize(res.Msg.Root))

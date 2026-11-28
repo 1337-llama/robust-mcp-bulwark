@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1337-llama/robust-mcp-bulwark/internal/audit"
 	"github.com/1337-llama/robust-mcp-bulwark/internal/jsonrpc"
 	"github.com/1337-llama/robust-mcp-bulwark/internal/mcprev"
 	"github.com/1337-llama/robust-mcp-bulwark/internal/pipeline"
@@ -183,4 +185,37 @@ func alive(pid int) bool {
 	}
 	_, after, _ := strings.Cut(string(b), ") ")
 	return !strings.HasPrefix(after, "Z")
+}
+
+type failingAudit struct{}
+
+func (failingAudit) Write(audit.Record) error { return errors.New("disk full") }
+func (failingAudit) MAC([]byte) string        { return "hmac-sha256:x" }
+
+// Verifies: FR-026, NFR-005 (AC-24: audit failure blocks in enforce, warns in warn)
+func TestAuditFailure(t *testing.T) {
+	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{` + meta + `,"name":"x","arguments":{}}}`
+	list := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{` + meta + `}}`
+	for mode, want := range map[string][2]string{
+		"enforce": {`"text":"Blocked by MCP Bulwark (audit log unavailable)"`, `"id":2,"error":{"code":-32603`},
+		"warn":    {`"id":1,"result":{"echo"`, `"id":2,"result":{"echo"`},
+	} {
+		t.Setenv("FAKE", "")
+		ir, iw := io.Pipe()
+		or, ow := io.Pipe()
+		out := bufio.NewScanner(or)
+		conn := &mcprev.Conn{}
+		o := Options{Mode: mode, ServerID: "t", MaxMessage: 1 << 16, MaxDepth: 64, MaxOutstanding: 8, Conn: conn,
+			Chain: pipeline.Chain{pipeline.Revision{Conn: conn}}, Audit: failingAudit{}, GracePeriod: 200 * time.Millisecond}
+		done := make(chan struct{})
+		go func() { Run(context.Background(), o, []string{fakeBin}, ir, ow, io.Discard); ow.Close(); close(done) }()
+		for i, in := range []string{call, list} {
+			io.WriteString(iw, in+"\n")
+			if !out.Scan() || !strings.Contains(out.Text(), want[i]) {
+				t.Errorf("%s: got %q, want %s", mode, out.Text(), want[i])
+			}
+		}
+		iw.Close()
+		<-done
+	}
 }
