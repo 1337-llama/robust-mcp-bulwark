@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCP Bulwark configuration, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {"const": 1},
+    "servers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {"enum": ["learn", "warn", "enforce"]},
+          "pin_recheck_max_age": {"type": "string"},
+          "pin_recheck_min_age": {"type": "string"},
+          "arg_roles": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"enum": ["fs_path", "egress_url", "recipient"]}}}
+        }
+      }
+    },
+    "policy": {"type": "object", "additionalProperties": false, "properties": {
+      "baseline_allow": {"type": "boolean"}, "dirs": {"type": "array", "items": {"type": "string"}}, "eval_timeout": {"type": "string"}}},
+    "analyzers": {"type": "object", "additionalProperties": false, "properties": {
+      "enabled": {"type": "array", "items": {"enum": ["unicode.hidden", "text.imperative", "text.cross_reference", "schema.side_channel"]}}}},
+    "secrets": {"type": "object", "additionalProperties": false, "properties": {
+      "requests": {"enum": ["deny", "redact", "audit"]}, "results": {"enum": ["redact", "audit"]}}},
+    "mrtr": {"type": "object", "additionalProperties": false, "properties": {"mode": {"enum": ["enforce", "audit"]}}},
+    "limits": {"type": "object", "additionalProperties": false, "properties": {
+      "max_message_bytes": {"type": "integer", "minimum": 0}, "max_depth": {"type": "integer", "minimum": 0},
+      "max_outstanding_requests": {"type": "integer", "minimum": 0}, "notifications_per_second": {"type": "integer", "minimum": 0},
+      "gateway_request_timeout": {"type": "string"}}}
+  }
+}
